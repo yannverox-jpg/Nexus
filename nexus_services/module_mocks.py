@@ -44,6 +44,12 @@ class NexusWeb3WalletManager:
             "to": to_address
         }
 
+    def generate_encrypted_keypair(self) -> Dict[str, str]:
+        return {
+            "address": f"0x{uuid.uuid4().hex[:40]}",
+            "encrypted_private_key": f"enc_{uuid.uuid4().hex}"
+        }
+
 class NexusMicroserviceBridge:
     def __init__(self):
         pass
