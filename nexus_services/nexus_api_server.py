@@ -21,6 +21,7 @@ from service_marketplace import ServiceCatalogRegistry
 from web3_escrow_billing import NexusWeb3EscrowBilling
 from task_persistence_db import NexusDatabaseManager
 from dispute_resolution import NexusDisputeResolutionEngine
+from nexus_autonomous_boot import NexusAutonomousBootDaemon
 
 app = FastAPI(title="Nexus Task Department API", version="2.0")
 
@@ -42,6 +43,7 @@ auto_engine = NexusAutoTaskEngine(orchestrator)
 wallet_mgr: Optional[NexusWeb3WalletManager] = None
 escrow: Optional[NexusWeb3EscrowBilling] = None
 dispute_engine: Optional[NexusDisputeResolutionEngine] = None
+boot_daemon: Optional[NexusAutonomousBootDaemon] = None
 
 # Modèles Pydantic pour la validation du Front-End
 class SubmitGoalRequest(BaseModel):
@@ -57,7 +59,7 @@ class RegisterServiceRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    global wallet_mgr, escrow, dispute_engine
+    global wallet_mgr, escrow, dispute_engine, boot_daemon
 
     # Chargement de la configuration
     try:
@@ -76,6 +78,11 @@ async def startup_event():
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
     orchestrator.spawn_agent("Worker-Beta", "WEB3_EXECUTION")
     asyncio.create_task(orchestrator.start_dispatcher())
+
+    # Démarrage autonome M2M / Zero-Human-Touch Boot Daemon
+    boot_daemon = NexusAutonomousBootDaemon(auto_engine, db)
+    asyncio.create_task(boot_daemon.start_m2m_continuous_loop())
+
     print("⚡ [NEXUS API] Serveur Backend initialisé et prêt pour le Front-End.")
 
 @app.get("/health")
