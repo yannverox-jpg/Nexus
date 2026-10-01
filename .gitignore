@@ -1,3 +1,4 @@
 __pycache__/
 *.pyc
 *.db
+nexus_api_server.log
