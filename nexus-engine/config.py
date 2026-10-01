@@ -9,3 +9,7 @@ class Config:
 
     # Nom de l'environnement
     ENV = os.getenv("ENV", "production")
+
+    # Solana Configuration
+    SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+    NEXUS_PRIVATE_KEY = os.getenv("NEXUS_PRIVATE_KEY", "")
