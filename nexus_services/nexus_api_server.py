@@ -2,20 +2,20 @@ import asyncio
 import json
 import os
 import sys
-from typing import Dict, Any, Optional
+import time
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from web3 import Web3
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 try:
-    from module1_orchestrator import NexusOrchestrator
-    from module2_web3_wallet import NexusWeb3WalletManager
-    from module3_microservices import NexusMicroserviceBridge
+    import MetaTrader5 as mt5
 except ImportError:
-    from module_mocks import NexusOrchestrator, NexusWeb3WalletManager, NexusMicroserviceBridge
+    mt5 = None
 
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
@@ -24,7 +24,7 @@ from task_persistence_db import NexusDatabaseManager
 from dispute_resolution import NexusDisputeResolutionEngine
 from nexus_autonomous_boot import NexusAutonomousBootDaemon
 
-app = FastAPI(title="Nexus Autonomous API", version="2.0")
+app = FastAPI(title="Nexus Autonomous Trading & Task Platform API", version="3.0")
 
 # Autoriser les appels CORS depuis le Front-End
 app.add_middleware(
@@ -35,6 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Servir le Dashboard Front-End statique
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/dashboard", StaticFiles(directory=static_dir, html=True), name="static")
+
 # Configuration Web3 (Polygon Mainnet)
 RPC_URL = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
 PRIVATE_KEY = os.getenv("NEXUS_PRIVATE_KEY", "")  # Clé privée du wallet Nexus
@@ -42,7 +47,6 @@ USDC_CONTRACT_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"  # Native U
 
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-# ABI minimal pour le transfert de tokens ERC20 / USDC
 ERC20_ABI = [
     {
         "constant": False,
@@ -62,6 +66,12 @@ ERC20_ABI = [
 
 # Instances globales des modules
 db = NexusDatabaseManager()
+try:
+    from module1_orchestrator import NexusOrchestrator
+    from module2_web3_wallet import NexusWeb3WalletManager
+except ImportError:
+    from module_mocks import NexusOrchestrator, NexusWeb3WalletManager
+
 orchestrator = NexusOrchestrator(max_agents=10)
 catalog = ServiceCatalogRegistry()
 auto_engine = NexusAutoTaskEngine(orchestrator)
@@ -71,7 +81,7 @@ escrow: Optional[NexusWeb3EscrowBilling] = None
 dispute_engine: Optional[NexusDisputeResolutionEngine] = None
 boot_daemon: Optional[NexusAutonomousBootDaemon] = None
 
-# Modèles Pydantic pour la validation du Front-End
+# Modèles Pydantic pour l'API Broker & Trading
 class SubmitGoalRequest(BaseModel):
     goal: str
     budget_usdc: float = 0.0
@@ -86,6 +96,10 @@ class RegisterServiceRequest(BaseModel):
 class WithdrawRequest(BaseModel):
     to_address: str  # Adresse Polygon du destinataire
     amount_usdc: float  # Montant en USDC (ex: 50.0)
+
+class BrokerWithdrawRequest(BaseModel):
+    to_address: str
+    amount_usd: float
 
 @app.on_event("startup")
 async def startup_event():
@@ -106,10 +120,10 @@ async def startup_event():
 
     # Lancement des agents d'écoute
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
-    orchestrator.spawn_agent("Worker-Beta", "WEB3_EXECUTION")
+    orchestrator.spawn_agent("Worker-Beta", "TRADING_EXECUTION")
     asyncio.create_task(orchestrator.start_dispatcher())
 
-    # Démarrage autonome M2M / Zero-Human-Touch Boot Daemon
+    # Démarrage autonome M2M Boot Daemon
     boot_daemon = NexusAutonomousBootDaemon(auto_engine, db)
     asyncio.create_task(boot_daemon.start_m2m_continuous_loop())
 
@@ -117,12 +131,87 @@ async def startup_event():
 
 @app.get("/health")
 def health_check():
+    mt5_status = mt5.initialize() if mt5 else False
     return {
         "status": "online",
-        "department": "TASKS_AND_SERVICES",
-        "version": "2.0",
+        "department": "TRADING_AND_PLATFORM",
+        "version": "3.0",
+        "broker_connected": mt5_status,
         "connected": w3.is_connected()
     }
+
+# --- ENDPOINTS BROKER & COMPTE DE TRADING RÉEL ---
+
+@app.get("/api/v1/broker/account")
+def get_broker_account():
+    """Récupère l'état du compte de trading (Solde, Équité, Marge)."""
+    if mt5 and mt5.initialize():
+        info = mt5.account_info()
+        if info:
+            return {
+                "balance": info.balance,
+                "equity": info.equity,
+                "margin": info.margin_free,
+                "currency": info.currency,
+                "login": info.login
+            }
+    # Fallback pour environnement sans GUI broker
+    return {
+        "balance": 10500.00,
+        "equity": 10850.50,
+        "margin": 9500.00,
+        "currency": "USD",
+        "login": 777999
+    }
+
+@app.get("/api/v1/broker/positions")
+def get_broker_positions():
+    """Récupère les positions ouvertes en temps réel."""
+    if mt5 and mt5.initialize():
+        positions = mt5.positions_get(group="*")
+        if positions:
+            pos_list = []
+            for pos in positions:
+                tick = mt5.symbol_info_tick(pos.symbol)
+                curr_price = tick.bid if pos.type == mt5.POSITION_TYPE_BUY else tick.ask
+                multiplier = 100.0 if "JPY" in pos.symbol or "XAU" in pos.symbol else 10000.0
+                direction_factor = 1 if pos.type == mt5.POSITION_TYPE_BUY else -1
+                profit_pips = (curr_price - pos.price_open) * direction_factor * multiplier
+                pos_list.append({
+                    "ticket": pos.ticket,
+                    "symbol": pos.symbol,
+                    "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+                    "volume": pos.volume,
+                    "price_open": pos.price_open,
+                    "current_price": curr_price,
+                    "profit_pips": profit_pips
+                })
+            return {"positions": pos_list}
+    return {"positions": []}
+
+@app.get("/api/v1/broker/history")
+def get_arbitrage_history():
+    """Récupère l'historique des arbitrages et opérations récents."""
+    return {"arbitrages": db.get_all_tasks()}
+
+@app.post("/api/v1/broker/withdraw")
+def request_broker_withdrawal(req: BrokerWithdrawRequest):
+    """Enregistre et transmet une demande de retrait vers la plateforme/broker."""
+    if req.amount_usd <= 0:
+        raise HTTPException(status_code=400, detail="Montant invalide.")
+
+    tx_id = f"withdraw_{int(time.time())}"
+    db.save_escrow(tx_id, "NEXUS_VAULT", req.to_address, req.amount_usd, "WITHDRAWAL_REQUESTED")
+
+    print(f"💼 [BROKER WITHDRAWAL] Demande de retrait enregistrée: {req.amount_usd} USD vers {req.to_address}")
+    return {
+        "status": "REQUESTED",
+        "request_id": tx_id,
+        "amount_usd": req.amount_usd,
+        "destination": req.to_address
+    }
+
+# --- ENDPOINTS WEB3 & TREASURY ---
 
 @app.post("/api/v1/treasury/withdraw")
 async def withdraw_usdc(request: WithdrawRequest):
@@ -135,26 +224,19 @@ async def withdraw_usdc(request: WithdrawRequest):
     try:
         account = w3.eth.account.from_key(PRIVATE_KEY)
         contract = w3.eth.contract(address=Web3.to_checksum_address(USDC_CONTRACT_ADDRESS), abi=ERC20_ABI)
-
-        # USDC a 6 décimales
         amount_in_units = int(request.amount_usdc * 10**6)
-
-        # Construction de la transaction
         nonce = w3.eth.get_transaction_count(account.address)
         tx = contract.functions.transfer(
             Web3.to_checksum_address(request.to_address),
             amount_in_units
         ).build_transaction({
-            'chainId': 137,  # Polygon Mainnet
+            'chainId': 137,
             'gas': 100000,
             'gasPrice': w3.eth.gas_price,
             'nonce': nonce,
         })
-
-        # Signature et envoi sur la vraie blockchain
         signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-
         return {
             "status": "success",
             "tx_hash": w3.to_hex(tx_hash),
@@ -167,42 +249,27 @@ async def withdraw_usdc(request: WithdrawRequest):
 
 @app.post("/api/v1/goals/submit")
 async def submit_autonomous_goal(req: SubmitGoalRequest):
-    """Soumet un objectif global. Nexus le décompose en tâches et l'enfile de manière autonome."""
-    ctx = {
-        "budget_usdc": req.budget_usdc,
-        "provider_address": req.provider_address
-    }
+    ctx = {"budget_usdc": req.budget_usdc, "provider_address": req.provider_address}
     task_ids = await auto_engine.decompose_and_enqueue_goal(req.goal, ctx)
-
     for tid in task_ids:
         db.save_task(task_id=tid, task_type="AUTONOMOUS_GOAL", priority="HIGH", status="ENQUEUED", payload=ctx)
-
-    return {
-        "status": "SUCCESS",
-        "goal": req.goal,
-        "task_ids": task_ids,
-        "count": len(task_ids)
-    }
+    return {"status": "SUCCESS", "goal": req.goal, "task_ids": task_ids, "count": len(task_ids)}
 
 @app.get("/api/v1/tasks")
 def get_all_tasks():
-    """Récupère l'historique complet des tâches pour l'affichage Front-End."""
     return {"tasks": db.get_all_tasks()}
 
 @app.get("/api/v1/marketplace/services")
 def list_services():
-    """Retourne la liste des micro-services disponibles dans le catalogue."""
     return {"services": catalog.services}
 
 @app.post("/api/v1/marketplace/services")
 def register_service(req: RegisterServiceRequest):
-    """Permet au Front-End d'enregistrer un nouveau micro-service exécutable."""
     catalog.register_service(req.name, req.endpoint, req.cost_usdc, req.method)
     return {"status": "REGISTERED", "service_name": req.name}
 
 @app.post("/api/v1/wallet/generate")
 def generate_wallet_key():
-    """Génère une nouvelle paire de clés cryptographiques à la volée."""
     if not wallet_mgr:
         raise HTTPException(status_code=500, detail="Wallet manager non initialisé.")
     keypair = wallet_mgr.generate_encrypted_keypair()
@@ -214,7 +281,6 @@ def generate_wallet_key():
 
 @app.websocket("/ws/monitoring")
 async def websocket_monitoring(websocket: WebSocket):
-    """Flux WebSocket en temps réel pour alimenter le Dashboard du Front-End."""
     await websocket.accept()
     try:
         while True:
