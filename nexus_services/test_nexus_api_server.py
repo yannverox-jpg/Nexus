@@ -17,13 +17,20 @@ class TestNexusAPIServer(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(nexus_api_server.app)
 
-    def tearDown(self):
-        pass
-
     def test_health_check(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "ONLINE")
+        self.assertEqual(response.json()["status"], "online")
+        self.assertIn("connected", response.json())
+
+    def test_withdraw_missing_key(self):
+        payload = {
+            "to_address": "0x0000000000000000000000000000000000000000",
+            "amount_usdc": 10.0
+        }
+        response = self.client.post("/api/v1/treasury/withdraw", json=payload)
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("NEXUS_PRIVATE_KEY", response.json()["detail"])
 
     def test_submit_goal(self):
         payload = {
@@ -44,7 +51,7 @@ class TestNexusAPIServer(unittest.TestCase):
 
     def test_marketplace_services(self):
         res_list = self.client.get("/api/v1/marketplace/services")
-        self.assertEqual(res_list.status_code, 200)
+        self.assertEqual(response_code := res_list.status_code, 200)
         self.assertIn("CONTRACT_VERIFIER", res_list.json()["services"])
 
         reg_payload = {

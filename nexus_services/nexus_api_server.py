@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from web3 import Web3
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -23,7 +24,7 @@ from task_persistence_db import NexusDatabaseManager
 from dispute_resolution import NexusDisputeResolutionEngine
 from nexus_autonomous_boot import NexusAutonomousBootDaemon
 
-app = FastAPI(title="Nexus Task Department API", version="2.0")
+app = FastAPI(title="Nexus Autonomous API", version="2.0")
 
 # Autoriser les appels CORS depuis le Front-End
 app.add_middleware(
@@ -33,6 +34,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Configuration Web3 (Polygon Mainnet)
+RPC_URL = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
+PRIVATE_KEY = os.getenv("NEXUS_PRIVATE_KEY", "")  # Clé privée du wallet Nexus
+USDC_CONTRACT_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"  # Native USDC Polygon
+
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+
+# ABI minimal pour le transfert de tokens ERC20 / USDC
+ERC20_ABI = [
+    {
+        "constant": False,
+        "inputs": [{"name": "_to", "type": "address"}, {"name": "_value", "type": "uint256"}],
+        "name": "transfer",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function"
+    },
+    {
+        "constant": True,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
+        "type": "function"
+    }
+]
 
 # Instances globales des modules
 db = NexusDatabaseManager()
@@ -57,6 +83,10 @@ class RegisterServiceRequest(BaseModel):
     cost_usdc: float
     method: str = "POST"
 
+class WithdrawRequest(BaseModel):
+    to_address: str  # Adresse Polygon du destinataire
+    amount_usdc: float  # Montant en USDC (ex: 50.0)
+
 @app.on_event("startup")
 async def startup_event():
     global wallet_mgr, escrow, dispute_engine, boot_daemon
@@ -66,9 +96,9 @@ async def startup_event():
         config_path = os.path.join(os.path.dirname(__file__), "config_nexus.json")
         with open(config_path, "r") as f:
             config = json.load(f)
-        rpc_url = config.get("web3_wallet", {}).get("evm_rpc_url", "https://rpc.ankr.com/eth")
+        rpc_url = config.get("web3_wallet", {}).get("evm_rpc_url", RPC_URL)
     except Exception:
-        rpc_url = "https://rpc.ankr.com/eth"
+        rpc_url = RPC_URL
 
     wallet_mgr = NexusWeb3WalletManager(evm_rpc_url=rpc_url)
     escrow = NexusWeb3EscrowBilling(wallet_mgr)
@@ -87,7 +117,53 @@ async def startup_event():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ONLINE", "department": "TASKS_AND_SERVICES", "version": "2.0"}
+    return {
+        "status": "online",
+        "department": "TASKS_AND_SERVICES",
+        "version": "2.0",
+        "connected": w3.is_connected()
+    }
+
+@app.post("/api/v1/treasury/withdraw")
+async def withdraw_usdc(request: WithdrawRequest):
+    if not PRIVATE_KEY:
+        raise HTTPException(status_code=500, detail="Clé privée NEXUS_PRIVATE_KEY manquante dans l'environnement")
+
+    if not w3.is_address(request.to_address):
+        raise HTTPException(status_code=400, detail="Adresse destination invalide")
+
+    try:
+        account = w3.eth.account.from_key(PRIVATE_KEY)
+        contract = w3.eth.contract(address=Web3.to_checksum_address(USDC_CONTRACT_ADDRESS), abi=ERC20_ABI)
+
+        # USDC a 6 décimales
+        amount_in_units = int(request.amount_usdc * 10**6)
+
+        # Construction de la transaction
+        nonce = w3.eth.get_transaction_count(account.address)
+        tx = contract.functions.transfer(
+            Web3.to_checksum_address(request.to_address),
+            amount_in_units
+        ).build_transaction({
+            'chainId': 137,  # Polygon Mainnet
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': nonce,
+        })
+
+        # Signature et envoi sur la vraie blockchain
+        signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+
+        return {
+            "status": "success",
+            "tx_hash": w3.to_hex(tx_hash),
+            "amount_usdc": request.amount_usdc,
+            "recipient": request.to_address,
+            "network": "Polygon"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/goals/submit")
 async def submit_autonomous_goal(req: SubmitGoalRequest):
