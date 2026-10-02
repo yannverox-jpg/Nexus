@@ -5,3 +5,5 @@ nexus_api_server.log
 localtunnel.log
 lt.log
 *.db
+*.db-shm
+*.db-wal

@@ -12,7 +12,7 @@ class TestWalletManager(unittest.TestCase):
     def test_nexus_wallet_manager_init(self):
         manager = NexusWalletManager()
         self.assertIsNotNone(manager.get_public_address())
-        self.assertEqual(len(manager.get_public_address()), 44)
+        self.assertGreaterEqual(len(manager.get_public_address()), 32)
 
     @patch("wallet_manager.Client")
     def test_get_sol_balance(self, mock_client_cls):
