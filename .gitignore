@@ -4,3 +4,4 @@ __pycache__/
 nexus_api_server.log
 localtunnel.log
 lt.log
+*.db
