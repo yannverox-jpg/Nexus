@@ -19,7 +19,7 @@ class TestBrokerDashboard(unittest.TestCase):
         res = self.client.get("/health")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "online")
-        self.assertEqual(res.json()["department"], "GHOST_META_KERNEL")
+        self.assertEqual(res.json()["department"], "NFX_GHOST_v2.5_SENTINEL")
 
     def test_broker_account_endpoint(self):
         res = self.client.get("/api/v1/broker/account")

@@ -29,10 +29,15 @@ from ghost_meta_kernel import (
     HumanInTheLoopGateway,
     DynamicCapabilityRegistry
 )
+from ghost_institutional_predictive_engine import (
+    TopologicalCointegrationGraph,
+    MCPTryptychOrchestrator,
+    CognitiveReadinessManager
+)
 
-app = FastAPI(title="Nexus Autonomous Trading & Task Platform API - GHOST Kernel", version="3.0")
+app = FastAPI(title="Nexus NFX-GHOST v2.5 Autonomous Predictive Sentinel API", version="3.5")
 
-# Autoriser les appels CORS depuis le Front-End Base44
+# Autoriser les appels CORS depuis le Front-End Replit & Base44
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -87,6 +92,10 @@ ghost_cognitive_pipeline = CognitivePipeline()
 ghost_hitl_gateway = HumanInTheLoopGateway()
 ghost_llm_tryptych = LLMTryptychController()
 
+ghost_topological_graph = TopologicalCointegrationGraph()
+ghost_mcp_orchestrator = MCPTryptychOrchestrator(ghost_topological_graph)
+ghost_readiness_manager = CognitiveReadinessManager()
+
 wallet_mgr: Optional[NexusWeb3WalletManager] = None
 escrow: Optional[NexusWeb3EscrowBilling] = None
 dispute_engine: Optional[NexusDisputeResolutionEngine] = None
@@ -115,6 +124,9 @@ class BrokerWithdrawRequest(BaseModel):
 class HITLApprovalRequest(BaseModel):
     hitl_id: str
 
+class AgentChatRequest(BaseModel):
+    message: str
+
 @app.on_event("startup")
 async def startup_event():
     global wallet_mgr, escrow, dispute_engine, boot_daemon
@@ -138,29 +150,62 @@ async def startup_event():
     boot_daemon = NexusAutonomousBootDaemon(auto_engine, db)
     asyncio.create_task(boot_daemon.start_m2m_continuous_loop())
 
-    print("👑 [GHOST META KERNEL] Serveur Backend initialisé et prêt sur Nexus.")
+    print("👑 [NFX-GHOST v2.5] Serveur Backend initialisé et prêt sur Nexus.")
 
 @app.get("/health")
 def health_check():
     mt5_status = mt5.initialize() if mt5 else False
     return {
         "status": "online",
-        "department": "GHOST_META_KERNEL",
-        "version": "3.0",
+        "department": "NFX_GHOST_v2.5_SENTINEL",
+        "version": "3.5",
         "broker_connected": mt5_status,
         "connected": w3.is_connected()
     }
 
-# --- ENDPOINT REGISTRE DE CAPACITÉS DYNAMIQUES GHOST ---
+# --- ENDPOINTS MÉMOIRE PERSISTANTE (GHOST DB) & READINESS ---
+
+@app.get("/api/v1/memory/short")
+def get_short_term_memory():
+    """Récupère les événements récents (Hot Cache / Short Term Memory)."""
+    return {"market_events": db.get_recent_market_events(limit=20)}
+
+@app.get("/api/v1/memory/long")
+def get_long_term_memory():
+    """Récupère les archives institutionnelles (AI Decisions & Historical Shocks)."""
+    return {"ai_decisions": db.get_recent_ai_decisions(limit=20)}
+
+@app.get("/api/v1/readiness-status")
+def get_readiness_status():
+    """Retourne l'indice de maturité cognitive (M_global = 100%) et l'état de zéro trésorerie."""
+    return ghost_readiness_manager.calculate_readiness_maturity()
+
+# --- ENDPOINTS DISCUSSION DIRECTE MULTI-AGENTS (REPLIT CHANNELS) ---
+
+@app.post("/api/v1/ghost/chat/{agent_name}")
+async def chat_with_agent(agent_name: str, req: AgentChatRequest):
+    """Canal d'interaction directe pour converser avec Gemini, GPT ou Claude."""
+    agent_upper = agent_name.upper()
+    if agent_upper == "GEMINI":
+        intel = ghost_llm_tryptych.gemini_web_recon(req.message)
+        return {"agent": "Gemini", "response": f"Radar Macro: {intel['intel']}", "data": intel}
+    elif agent_upper == "GPT":
+        structured = ghost_llm_tryptych.gpt_structurer(req.message)
+        return {"agent": "GPT", "response": f"Translation Topologique: {structured['structured_json']}", "data": structured}
+    elif agent_upper == "CLAUDE":
+        dec = ghost_llm_tryptych.claude_self_code_and_decide()
+        return {"agent": "Claude", "response": f"Synthèse Souveraine: {dec['strategy']}", "data": dec}
+    else:
+        raise HTTPException(status_code=400, detail="Agent non reconnu. Choisir parmi Gemini, GPT, Claude.")
+
+# --- ENDPOINTS GHOST & MODULES DYNAMIQUES ---
 
 @app.get("/api/v1/modules")
 def get_dynamic_modules():
-    """Expose le registre JSON en temps réel des sous-systèmes actifs (GHOST Kernel)."""
     return ghost_capability_registry.get_capabilities_manifest()
 
 @app.post("/api/v1/ghost/hitl/approve")
 def approve_hitl_action(req: HITLApprovalRequest):
-    """Permet à l'opérateur humain de valider une action suspendue par la passerelle HITL."""
     success = ghost_hitl_gateway.approve_action(req.hitl_id)
     if not success:
         raise HTTPException(status_code=404, detail="Action HITL introuvable ou déjà traitée.")
@@ -223,8 +268,6 @@ def request_broker_withdrawal(req: BrokerWithdrawRequest):
 
     tx_id = f"withdraw_{int(time.time())}"
     db.save_escrow(tx_id, "NEXUS_VAULT", req.to_address, req.amount_usd, "WITHDRAWAL_REQUESTED")
-
-    print(f"💼 [BROKER WITHDRAWAL] Demande de retrait enregistrée: {req.amount_usd} USD vers {req.to_address}")
     return {
         "status": "REQUESTED",
         "request_id": tx_id,

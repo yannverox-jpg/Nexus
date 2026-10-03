@@ -5,8 +5,9 @@ from typing import Dict, Any, List, Optional
 
 class NexusDatabaseManager:
     """
-    Gestionnaire de persistance locale : enregistre l'état des tâches,
-    l'historique des paiements Web3/Escrows et la réputation des micro-services.
+    Gestionnaire de persistance locale GHOST DB :
+    - Registres court terme (Hot Cache / WAL SQLite)
+    - Archives long terme (market_events, ai_decisions, historical_shocks)
     """
     def __init__(self, db_path: str = "nexus_tasks_state.db"):
         self.db_path = db_path
@@ -18,7 +19,6 @@ class NexusDatabaseManager:
     def _init_db(self):
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Table des tâches
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
@@ -32,7 +32,6 @@ class NexusDatabaseManager:
                     updated_at REAL
                 )
             """)
-            # Table des escrows
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS escrows (
                     escrow_id TEXT PRIMARY KEY,
@@ -45,7 +44,6 @@ class NexusDatabaseManager:
                     updated_at REAL
                 )
             """)
-            # Table de réputation des micro-services
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS service_reputation (
                     service_name TEXT PRIMARY KEY,
@@ -54,6 +52,36 @@ class NexusDatabaseManager:
                     failed_calls INTEGER,
                     success_rate REAL,
                     avg_latency_sec REAL
+                )
+            """)
+            # Tables Archives Institutionnelles Long Terme
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_events (
+                    event_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    vector_v_d TEXT NOT NULL,
+                    spread_s_d TEXT NOT NULL,
+                    residual_r_e REAL,
+                    timestamp REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ai_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    gemini_intel TEXT,
+                    gpt_topology TEXT,
+                    claude_report TEXT,
+                    readiness_m_global REAL,
+                    timestamp REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS historical_shocks (
+                    shock_id TEXT PRIMARY KEY,
+                    shock_type TEXT NOT NULL,
+                    affected_assets TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    timestamp REAL NOT NULL
                 )
             """)
             conn.commit()
@@ -81,6 +109,24 @@ class NexusDatabaseManager:
                 INSERT OR REPLACE INTO escrows (escrow_id, client_address, provider_address, amount_usdc, status, tx_hash, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (escrow_id, client, provider, amount, status, tx_hash, now, now))
+            conn.commit()
+
+    def save_market_event(self, event_id: str, symbol: str, v_d: dict, s_d: dict, r_e: float):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conn.execute("""
+                INSERT OR REPLACE INTO market_events (event_id, symbol, vector_v_d, spread_s_d, residual_r_e, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (event_id, symbol, json.dumps(v_d), json.dumps(s_d), r_e, time.time()))
+            conn.commit()
+
+    def save_ai_decision(self, decision_id: str, gemini_intel: dict, gpt_topology: dict, claude_report: dict, m_global: float):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conn.execute("""
+                INSERT OR REPLACE INTO ai_decisions (decision_id, gemini_intel, gpt_topology, claude_report, readiness_m_global, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (decision_id, json.dumps(gemini_intel), json.dumps(gpt_topology), json.dumps(claude_report), m_global, time.time()))
             conn.commit()
 
     def update_service_reputation(self, service_name: str, success: bool, latency: float):
@@ -115,3 +161,31 @@ class NexusDatabaseManager:
             cursor.execute("SELECT task_id, task_type, priority, status, created_at FROM tasks ORDER BY created_at DESC")
             rows = cursor.fetchall()
             return [{"task_id": r[0], "task_type": r[1], "priority": r[2], "status": r[3], "created_at": r[4]} for r in rows]
+
+    def get_recent_market_events(self, limit: int = 10) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT event_id, symbol, vector_v_d, spread_s_d, residual_r_e, timestamp FROM market_events ORDER BY timestamp DESC LIMIT ?", (limit,))
+            rows = cursor.fetchall()
+            return [{
+                "event_id": r[0],
+                "symbol": r[1],
+                "vector_v_d": json.loads(r[2]),
+                "spread_s_d": json.loads(r[3]),
+                "residual_r_e": r[4],
+                "timestamp": r[5]
+            } for r in rows]
+
+    def get_recent_ai_decisions(self, limit: int = 10) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT decision_id, gemini_intel, gpt_topology, claude_report, readiness_m_global, timestamp FROM ai_decisions ORDER BY timestamp DESC LIMIT ?", (limit,))
+            rows = cursor.fetchall()
+            return [{
+                "decision_id": r[0],
+                "gemini_intel": json.loads(r[1]),
+                "gpt_topology": json.loads(r[2]),
+                "claude_report": json.loads(r[3]),
+                "readiness_m_global": r[4],
+                "timestamp": r[5]
+            } for r in rows]

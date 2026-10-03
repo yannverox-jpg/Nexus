@@ -30,7 +30,7 @@ class TestGhostV2Engine(unittest.IsolatedAsyncioTestCase):
 
         mcp = MCPTryptychOrchestrator(graph)
         synthesis = await mcp.run_mcp_synthesis_cycle("FOMC Rate Announcement")
-        self.assertEqual(synthesis["active_mode"], "SOVEREIGN_PREDICTIVE_SENTINEL_V2")
+        self.assertEqual(synthesis["active_mode"], "NFX_GHOST_v2.5_SENTINEL")
         self.assertEqual(synthesis["claude"]["zero_treasury_policy"], "STRICT_ANALYTICAL_SENTINEL_MODE")
 
 if __name__ == "__main__":
