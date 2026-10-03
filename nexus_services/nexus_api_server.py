@@ -34,6 +34,7 @@ from ghost_institutional_predictive_engine import (
     MCPTryptychOrchestrator,
     CognitiveReadinessManager
 )
+from nexus_websocket_proxy import router as ws_proxy_router
 
 app = FastAPI(title="Nexus NFX-GHOST v2.5 Autonomous Predictive Sentinel API", version="3.5")
 
@@ -45,6 +46,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(ws_proxy_router)
 
 # Servir le Dashboard Front-End statique
 static_dir = os.path.join(os.path.dirname(__file__), "static")
