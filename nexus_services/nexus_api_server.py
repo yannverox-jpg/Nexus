@@ -23,10 +23,16 @@ from web3_escrow_billing import NexusWeb3EscrowBilling
 from task_persistence_db import NexusDatabaseManager
 from dispute_resolution import NexusDisputeResolutionEngine
 from nexus_autonomous_boot import NexusAutonomousBootDaemon
+from ghost_meta_kernel import (
+    CognitivePipeline,
+    LLMTryptychController,
+    HumanInTheLoopGateway,
+    DynamicCapabilityRegistry
+)
 
-app = FastAPI(title="Nexus Autonomous Trading & Task Platform API", version="3.0")
+app = FastAPI(title="Nexus Autonomous Trading & Task Platform API - GHOST Kernel", version="3.0")
 
-# Autoriser les appels CORS depuis le Front-End
+# Autoriser les appels CORS depuis le Front-End Base44
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -64,7 +70,7 @@ ERC20_ABI = [
     }
 ]
 
-# Instances globales des modules
+# Instances globales des modules & GHOST Kernel
 db = NexusDatabaseManager()
 try:
     from module1_orchestrator import NexusOrchestrator
@@ -76,12 +82,17 @@ orchestrator = NexusOrchestrator(max_agents=10)
 catalog = ServiceCatalogRegistry()
 auto_engine = NexusAutoTaskEngine(orchestrator)
 
+ghost_capability_registry = DynamicCapabilityRegistry()
+ghost_cognitive_pipeline = CognitivePipeline()
+ghost_hitl_gateway = HumanInTheLoopGateway()
+ghost_llm_tryptych = LLMTryptychController()
+
 wallet_mgr: Optional[NexusWeb3WalletManager] = None
 escrow: Optional[NexusWeb3EscrowBilling] = None
 dispute_engine: Optional[NexusDisputeResolutionEngine] = None
 boot_daemon: Optional[NexusAutonomousBootDaemon] = None
 
-# Modèles Pydantic pour l'API Broker & Trading
+# Modèles Pydantic
 class SubmitGoalRequest(BaseModel):
     goal: str
     budget_usdc: float = 0.0
@@ -94,18 +105,20 @@ class RegisterServiceRequest(BaseModel):
     method: str = "POST"
 
 class WithdrawRequest(BaseModel):
-    to_address: str  # Adresse Polygon du destinataire
-    amount_usdc: float  # Montant en USDC (ex: 50.0)
+    to_address: str
+    amount_usdc: float
 
 class BrokerWithdrawRequest(BaseModel):
     to_address: str
     amount_usd: float
 
+class HITLApprovalRequest(BaseModel):
+    hitl_id: str
+
 @app.on_event("startup")
 async def startup_event():
     global wallet_mgr, escrow, dispute_engine, boot_daemon
 
-    # Chargement de la configuration
     try:
         config_path = os.path.join(os.path.dirname(__file__), "config_nexus.json")
         with open(config_path, "r") as f:
@@ -118,33 +131,45 @@ async def startup_event():
     escrow = NexusWeb3EscrowBilling(wallet_mgr)
     dispute_engine = NexusDisputeResolutionEngine(escrow_system=escrow, db_manager=db)
 
-    # Lancement des agents d'écoute
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
     orchestrator.spawn_agent("Worker-Beta", "TRADING_EXECUTION")
     asyncio.create_task(orchestrator.start_dispatcher())
 
-    # Démarrage autonome M2M Boot Daemon
     boot_daemon = NexusAutonomousBootDaemon(auto_engine, db)
     asyncio.create_task(boot_daemon.start_m2m_continuous_loop())
 
-    print("⚡ [NEXUS API] Serveur Backend initialisé et prêt pour le Front-End.")
+    print("👑 [GHOST META KERNEL] Serveur Backend initialisé et prêt sur Nexus.")
 
 @app.get("/health")
 def health_check():
     mt5_status = mt5.initialize() if mt5 else False
     return {
         "status": "online",
-        "department": "TRADING_AND_PLATFORM",
+        "department": "GHOST_META_KERNEL",
         "version": "3.0",
         "broker_connected": mt5_status,
         "connected": w3.is_connected()
     }
 
-# --- ENDPOINTS BROKER & COMPTE DE TRADING RÉEL ---
+# --- ENDPOINT REGISTRE DE CAPACITÉS DYNAMIQUES GHOST ---
+
+@app.get("/api/v1/modules")
+def get_dynamic_modules():
+    """Expose le registre JSON en temps réel des sous-systèmes actifs (GHOST Kernel)."""
+    return ghost_capability_registry.get_capabilities_manifest()
+
+@app.post("/api/v1/ghost/hitl/approve")
+def approve_hitl_action(req: HITLApprovalRequest):
+    """Permet à l'opérateur humain de valider une action suspendue par la passerelle HITL."""
+    success = ghost_hitl_gateway.approve_action(req.hitl_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Action HITL introuvable ou déjà traitée.")
+    return {"status": "APPROVED", "hitl_id": req.hitl_id}
+
+# --- ENDPOINTS BROKER & TRADING ---
 
 @app.get("/api/v1/broker/account")
 def get_broker_account():
-    """Récupère l'état du compte de trading (Solde, Équité, Marge)."""
     if mt5 and mt5.initialize():
         info = mt5.account_info()
         if info:
@@ -155,7 +180,6 @@ def get_broker_account():
                 "currency": info.currency,
                 "login": info.login
             }
-    # Fallback pour environnement sans GUI broker
     return {
         "balance": 10500.00,
         "equity": 10850.50,
@@ -166,7 +190,6 @@ def get_broker_account():
 
 @app.get("/api/v1/broker/positions")
 def get_broker_positions():
-    """Récupère les positions ouvertes en temps réel."""
     if mt5 and mt5.initialize():
         positions = mt5.positions_get(group="*")
         if positions:
@@ -191,12 +214,10 @@ def get_broker_positions():
 
 @app.get("/api/v1/broker/history")
 def get_arbitrage_history():
-    """Récupère l'historique des arbitrages et opérations récents."""
     return {"arbitrages": db.get_all_tasks()}
 
 @app.post("/api/v1/broker/withdraw")
 def request_broker_withdrawal(req: BrokerWithdrawRequest):
-    """Enregistre et transmet une demande de retrait vers la plateforme/broker."""
     if req.amount_usd <= 0:
         raise HTTPException(status_code=400, detail="Montant invalide.")
 
@@ -210,8 +231,6 @@ def request_broker_withdrawal(req: BrokerWithdrawRequest):
         "amount_usd": req.amount_usd,
         "destination": req.to_address
     }
-
-# --- ENDPOINTS WEB3 & TREASURY ---
 
 @app.post("/api/v1/treasury/withdraw")
 async def withdraw_usdc(request: WithdrawRequest):
