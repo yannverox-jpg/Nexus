@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  nexus-telemetry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python3 metrics/telemetry_exporter.py
+    ports:
+      - "9090:9090"
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus
+    volumes:
+      - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9091:9090"
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: always

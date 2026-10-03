@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "nexus-trading-bridge": {
+      "command": "python",
+      "args": [
+        "-m",
+        "uvicorn",
+        "mcp_gemini_controller:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "MT5_LOG_LEVEL": "INFO"
+      },
+      "description": "Serveur MCP pour la gestion invisible des positions HFT et l'exécution des sorties dynamiques Gemini.",
+      "tools": [
+        {
+          "name": "get_position_state",
+          "description": "Récupère l'état en temps réel de la position MT5 sans TP/SL fixes.",
+          "endpoint": "/mcp/position_state",
+          "method": "GET"
+        },
+        {
+          "name": "execute_gemini_decision",
+          "description": "Exécute la fermeture immédiate de la position au prix du marché sur ordre de Gemini.",
+          "endpoint": "/mcp/execute_gemini_decision",
+          "method": "POST"
+        }
+      ]
+    }
+  }
+}
