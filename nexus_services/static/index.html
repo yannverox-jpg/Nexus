@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Pilot Dashboard - Real Trading & Platform Control</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 15px; margin-bottom: 20px; }
+        h1 { margin: 0; font-size: 24px; color: #38bdf8; }
+        .badge { background: #16a34a; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 15px; }
+        .card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; }
+        .card .value { font-size: 24px; font-weight: bold; color: #38bdf8; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #334155; font-size: 14px; }
+        th { color: #94a3b8; }
+        .btn { background: #0284c7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: #0369a1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 NEXUS PILOT DASHBOARD - TRADING PLATFORM</h1>
+            <span class="badge" id="status-badge">ONLINE</span>
+        </header>
+
+        <div class="metrics-grid">
+            <div class="card">
+                <h3>SOLDE COMPTE (BALANCE)</h3>
+                <div class="value" id="balance-val">$0.00</div>
+            </div>
+            <div class="card">
+                <h3>ÉQUITÉ (EQUITY)</h3>
+                <div class="value" id="equity-val">$0.00</div>
+            </div>
+            <div class="card">
+                <h3>MARGE DISPONIBLE (MARGIN)</h3>
+                <div class="value" id="margin-val">$0.00</div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 25px;">
+            <h3>📊 POSITIONS OUVERTES (REAL-TIME MT5 / BROKER)</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>TICKET</th>
+                        <th>SYMBOLE</th>
+                        <th>TYPE</th>
+                        <th>VOLUME</th>
+                        <th>PRIX D'OUVERTURE</th>
+                        <th>PROFIT (PIPS)</th>
+                    </tr>
+                </thead>
+                <tbody id="positions-body">
+                    <tr><td colspan="6" style="text-align: center; color: #64748b;">Aucune position ouverte.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h3>💸 RETRAIT VERS PLATFORME / BROKER</h3>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <input type="text" id="withdraw-addr" placeholder="Adresse du compte / IBAN / Wallet" style="flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white;">
+                <input type="number" id="withdraw-amount" placeholder="Montant USD" style="width: 120px; padding: 8px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white;">
+                <button class="btn" onclick="requestWithdrawal()">Demander Retrait</button>
+            </div>
+            <div id="withdraw-msg" style="margin-top: 10px; font-size: 13px; color: #38bdf8;"></div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchAccountData() {
+            try {
+                const res = await fetch('/api/v1/broker/account');
+                const data = await res.json();
+                document.getElementById('balance-val').innerText = '$' + data.balance.toFixed(2);
+                document.getElementById('equity-val').innerText = '$' + data.equity.toFixed(2);
+                document.getElementById('margin-val').innerText = '$' + data.margin.toFixed(2);
+
+                const posRes = await fetch('/api/v1/broker/positions');
+                const posData = await posRes.json();
+                const tbody = document.getElementById('positions-body');
+                if (posData.positions && posData.positions.length > 0) {
+                    tbody.innerHTML = posData.positions.map(p => `
+                        <tr>
+                            <td>${p.ticket}</td>
+                            <td>${p.symbol}</td>
+                            <td>${p.type}</td>
+                            <td>${p.volume}</td>
+                            <td>${p.price_open}</td>
+                            <td style="color: ${p.profit_pips >= 0 ? '#4ade80' : '#f87171'}">${p.profit_pips.toFixed(1)}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #64748b;">Aucune position ouverte.</td></tr>';
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function requestWithdrawal() {
+            const addr = document.getElementById('withdraw-addr').value;
+            const amount = parseFloat(document.getElementById('withdraw-amount').value);
+            if (!addr || !amount) return;
+
+            try {
+                const res = await fetch('/api/v1/broker/withdraw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ to_address: addr, amount_usd: amount })
+                });
+                const data = await res.json();
+                document.getElementById('withdraw-msg').innerText = 'Statut Retrait: ' + data.status + ' | ID: ' + (data.tx_hash || data.request_id || 'PENDING');
+            } catch (err) {
+                document.getElementById('withdraw-msg').innerText = 'Erreur lors de la demande.';
+            }
+        }
+
+        setInterval(fetchAccountData, 3000);
+        fetchAccountData();
+    </script>
+</body>
+</html>
