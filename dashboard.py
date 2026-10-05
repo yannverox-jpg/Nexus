@@ -7,20 +7,30 @@ import sys
 import psutil
 import glob
 import time
+import json
 from datetime import datetime
+
 
 # ============================================================
 # NEXUS OS - DASHBOARD
 # ============================================================
 #
-# Le dashboard est une INTERFACE du runtime Nexus.
-# Il ne simule pas les activités.
+# INTERFACE VISUELLE DU RUNTIME NEXUS
 #
-# Les informations affichées doivent provenir :
-#   - des processus réellement actifs
-#   - de la mémoire SQLite
-#   - des commandes réellement transmises
-#   - des modules réellement présents
+# PRINCIPES :
+#   - aucune activité fictive
+#   - aucun résultat généré artificiellement
+#   - aucune IA simulée
+#   - affichage des événements réellement écrits par Nexus
+#   - visualisation type NO-CODE / BUILD PIPELINE
+#   - suivi des commandes
+#   - suivi des agents
+#   - suivi des étapes
+#   - suivi des URLs et actions web
+#   - suivi des résultats
+#
+# Le dashboard ne décide pas ce que fait Nexus.
+# Il observe le runtime.
 #
 # ============================================================
 
@@ -31,7 +41,10 @@ from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DB_PATH = os.path.join(BASE_DIR, "nexus_memory.db")
+DB_PATH = os.path.join(
+    BASE_DIR,
+    "nexus_memory.db"
+)
 
 PYTHON_EXECUTABLE = sys.executable
 
@@ -43,37 +56,22 @@ st.set_page_config(
 
 
 # ============================================================
-# TITRE
-# ============================================================
-
-st.title("🛡️ Nexus OS - Centre de Contrôle Global")
-
-st.markdown(
-    """
-    **Runtime Nexus visible depuis le dashboard.**
-
-    Le dashboard ne simule pas l'activité du système.
-    Il affiche l'état réel des processus, commandes, journaux,
-    modules et résultats disponibles.
-    """
-)
-
-
-# ============================================================
 # OUTILS
 # ============================================================
 
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def connect_db():
-    conn = sqlite3.connect(
+
+    return sqlite3.connect(
         DB_PATH,
-        timeout=5,
+        timeout=10,
         check_same_thread=False
     )
-    return conn
 
 
 # ============================================================
@@ -84,6 +82,10 @@ def init_db():
 
     conn = connect_db()
     cursor = conn.cursor()
+
+    # --------------------------------------------------------
+    # Table historique existante
+    # --------------------------------------------------------
 
     cursor.execute(
         """
@@ -97,6 +99,10 @@ def init_db():
         """
     )
 
+    # --------------------------------------------------------
+    # Commandes
+    # --------------------------------------------------------
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS commands (
@@ -104,6 +110,73 @@ def init_db():
             timestamp TEXT,
             text TEXT,
             status TEXT
+        )
+        """
+    )
+
+    # --------------------------------------------------------
+    # NOUVEAU :
+    # Événements détaillés du runtime
+    #
+    # Cette table est le pont entre Nexus et l'interface.
+    # Les modules runtime doivent y écrire leurs événements.
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            event_type TEXT,
+            agent TEXT,
+            step TEXT,
+            status TEXT,
+            action TEXT,
+            target TEXT,
+            details TEXT,
+            result TEXT,
+            url TEXT,
+            metadata TEXT
+        )
+        """
+    )
+
+    # --------------------------------------------------------
+    # État des agents
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_agents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT UNIQUE,
+            role TEXT,
+            status TEXT,
+            current_step TEXT,
+            current_task TEXT,
+            last_activity TEXT,
+            metadata TEXT
+        )
+        """
+    )
+
+    # --------------------------------------------------------
+    # Opportunités détectées
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_opportunities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            source TEXT,
+            title TEXT,
+            url TEXT,
+            category TEXT,
+            score REAL,
+            status TEXT,
+            description TEXT,
+            metadata TEXT
         )
         """
     )
@@ -116,7 +189,269 @@ init_db()
 
 
 # ============================================================
-# LECTURE DES ACTIVITÉS
+# ENREGISTREMENT D'UN ÉVÉNEMENT
+# ============================================================
+#
+# Cette fonction est utilisable par les autres composants
+# si nécessaire.
+#
+# IMPORTANT :
+# le dashboard ne crée PAS automatiquement des événements
+# "pour faire joli".
+#
+# Les événements doivent représenter une action réellement
+# effectuée par Nexus.
+# ============================================================
+
+def record_event(
+    event_type,
+    agent=None,
+    step=None,
+    status=None,
+    action=None,
+    target=None,
+    details=None,
+    result=None,
+    url=None,
+    metadata=None,
+):
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+
+        if isinstance(metadata, dict):
+
+            metadata = json.dumps(
+                metadata,
+                ensure_ascii=False
+            )
+
+        cursor.execute(
+            """
+            INSERT INTO nexus_events (
+                timestamp,
+                event_type,
+                agent,
+                step,
+                status,
+                action,
+                target,
+                details,
+                result,
+                url,
+                metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now(),
+                event_type,
+                agent,
+                step,
+                status,
+                action,
+                target,
+                details,
+                result,
+                url,
+                metadata,
+            )
+        )
+
+        conn.commit()
+
+        return True
+
+    except Exception:
+
+        return False
+
+    finally:
+
+        conn.close()
+
+
+# ============================================================
+# LECTURE DES ÉVÉNEMENTS
+# ============================================================
+
+def load_events(limit=100):
+
+    if not os.path.exists(DB_PATH):
+        return []
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                timestamp,
+                event_type,
+                agent,
+                step,
+                status,
+                action,
+                target,
+                details,
+                result,
+                url,
+                metadata
+            FROM nexus_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        return cursor.fetchall()
+
+    except Exception:
+
+        return []
+
+    finally:
+
+        conn.close()
+
+
+# ============================================================
+# ÉTAT DU PIPELINE
+# ============================================================
+
+def get_latest_pipeline():
+
+    events = load_events(100)
+
+    if not events:
+        return []
+
+    pipeline = []
+
+    for event in reversed(events):
+
+        (
+            event_id,
+            timestamp,
+            event_type,
+            agent,
+            step,
+            status,
+            action,
+            target,
+            details,
+            result,
+            url,
+            metadata,
+        ) = event
+
+        pipeline.append(
+            {
+                "id": event_id,
+                "timestamp": timestamp,
+                "event_type": event_type,
+                "agent": agent,
+                "step": step,
+                "status": status,
+                "action": action,
+                "target": target,
+                "details": details,
+                "result": result,
+                "url": url,
+                "metadata": metadata,
+            }
+        )
+
+    return pipeline
+
+
+# ============================================================
+# AGENTS
+# ============================================================
+
+def load_agents():
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                agent_name,
+                role,
+                status,
+                current_step,
+                current_task,
+                last_activity,
+                metadata
+            FROM nexus_agents
+            ORDER BY agent_name
+            """
+        )
+
+        return cursor.fetchall()
+
+    except Exception:
+
+        return []
+
+    finally:
+
+        conn.close()
+
+
+# ============================================================
+# OPPORTUNITÉS
+# ============================================================
+
+def load_opportunities(limit=50):
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                timestamp,
+                source,
+                title,
+                url,
+                category,
+                score,
+                status,
+                description,
+                metadata
+            FROM nexus_opportunities
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        return cursor.fetchall()
+
+    except Exception:
+
+        return []
+
+    finally:
+
+        conn.close()
+
+
+# ============================================================
+# ACTIVITÉS EXISTANTES
 # ============================================================
 
 def load_activity_logs(limit=50):
@@ -128,6 +463,7 @@ def load_activity_logs(limit=50):
     cursor = conn.cursor()
 
     try:
+
         cursor.execute(
             """
             SELECT
@@ -143,16 +479,20 @@ def load_activity_logs(limit=50):
             (limit,)
         )
 
-        rows = cursor.fetchall()
+        return cursor.fetchall()
 
     except Exception:
-        rows = []
+
+        return []
 
     finally:
+
         conn.close()
 
-    return rows
 
+# ============================================================
+# COMMANDES
+# ============================================================
 
 def load_commands(limit=30):
 
@@ -163,6 +503,7 @@ def load_commands(limit=30):
     cursor = conn.cursor()
 
     try:
+
         cursor.execute(
             """
             SELECT
@@ -177,24 +518,25 @@ def load_commands(limit=30):
             (limit,)
         )
 
-        rows = cursor.fetchall()
+        return cursor.fetchall()
 
     except Exception:
-        rows = []
+
+        return []
 
     finally:
-        conn.close()
 
-    return rows
+        conn.close()
 
 
 # ============================================================
-# ENVOI D'UNE COMMANDE AU RUNTIME
+# ENVOI COMMANDE
 # ============================================================
 
 def send_command(command_text):
 
     if not command_text or not command_text.strip():
+
         return False
 
     conn = connect_db()
@@ -216,6 +558,7 @@ def send_command(command_text):
         )
 
         conn.commit()
+
         return True
 
     except Exception as exc:
@@ -227,6 +570,7 @@ def send_command(command_text):
         return False
 
     finally:
+
         conn.close()
 
 
@@ -251,9 +595,13 @@ def find_nexus_processes():
             if pid == current_pid:
                 continue
 
-            cmdline = process.info.get("cmdline") or []
+            cmdline = process.info.get(
+                "cmdline"
+            ) or []
 
-            command = " ".join(cmdline)
+            command = " ".join(
+                cmdline
+            )
 
             if any(
                 filename in command
@@ -264,13 +612,16 @@ def find_nexus_processes():
                     "nexus_web.py",
                     "nexus_dashboard.py",
                     "dashboard.py",
+                    "web.py",
                 ]
             ):
 
                 processes.append(
                     {
                         "pid": pid,
-                        "name": process.info.get("name"),
+                        "name": process.info.get(
+                            "name"
+                        ),
                         "command": command,
                     }
                 )
@@ -280,6 +631,7 @@ def find_nexus_processes():
             psutil.AccessDenied,
             psutil.ZombieProcess,
         ):
+
             continue
 
     return processes
@@ -290,18 +642,22 @@ def process_running(filename):
     for process in find_nexus_processes():
 
         if filename in process["command"]:
+
             return True
 
     return False
 
 
 # ============================================================
-# LANCEMENT DES COMPOSANTS
+# LANCEMENT DES MODULES
 # ============================================================
 
 def launch_python_file(filename):
 
-    filepath = os.path.join(BASE_DIR, filename)
+    filepath = os.path.join(
+        BASE_DIR,
+        filename
+    )
 
     if not os.path.exists(filepath):
 
@@ -335,7 +691,7 @@ def launch_python_file(filename):
 
 
 # ============================================================
-# MODULES DU PROJET
+# MODULES
 # ============================================================
 
 def scan_project_modules():
@@ -363,9 +719,12 @@ def scan_project_modules():
 
     for filepath in files:
 
-        filename = os.path.basename(filepath)
+        filename = os.path.basename(
+            filepath
+        )
 
         if filename not in result:
+
             result.append(filename)
 
     return sorted(result)
@@ -378,26 +737,113 @@ project_modules = scan_project_modules()
 # TÉLÉMÉTRIE
 # ============================================================
 
-cpu_usage = psutil.cpu_percent(interval=0.2)
+cpu_usage = psutil.cpu_percent(
+    interval=0.2
+)
 
 memory = psutil.virtual_memory()
 
-disk = psutil.disk_usage(BASE_DIR)
+disk = psutil.disk_usage(
+    BASE_DIR
+)
 
 nexus_processes = find_nexus_processes()
 
-core_running = process_running("main.py")
+core_running = process_running(
+    "main.py"
+)
 
-autonomer_running = process_running("nexus_autonomer.py")
+autonomer_running = process_running(
+    "nexus_autonomer.py"
+)
 
-run_all_running = process_running("run_all.py")
+run_all_running = process_running(
+    "run_all.py"
+)
+
+web_running = process_running(
+    "nexus_web.py"
+)
+
+dashboard_running = process_running(
+    "dashboard.py"
+)
 
 
 # ============================================================
-# BARRE LATÉRALE
+# STYLE VISUEL
 # ============================================================
 
-st.sidebar.header("🖥️ Télémétrie Nexus")
+st.markdown(
+    """
+    <style>
+
+    .pipeline-card {
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.10);
+        margin-bottom: 10px;
+        background: rgba(20,25,35,0.65);
+    }
+
+    .pipeline-running {
+        border-left: 4px solid #f59e0b;
+    }
+
+    .pipeline-success {
+        border-left: 4px solid #10b981;
+    }
+
+    .pipeline-error {
+        border-left: 4px solid #ef4444;
+    }
+
+    .pipeline-pending {
+        border-left: 4px solid #64748b;
+    }
+
+    .step-node {
+        display: inline-block;
+        padding: 8px 12px;
+        margin: 4px;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(30,41,59,0.8);
+        font-size: 0.85rem;
+    }
+
+    .live-indicator {
+        color: #10b981;
+        font-weight: 700;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# TITRE
+# ============================================================
+
+st.title(
+    "🛡️ Nexus OS - Centre de Contrôle Global"
+)
+
+st.caption(
+    "Interface du runtime réel. "
+    "Aucune activité n'est générée pour remplir l'écran."
+)
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+st.sidebar.header(
+    "🖥️ Télémétrie Nexus"
+)
 
 st.sidebar.metric(
     "CPU",
@@ -414,8 +860,8 @@ st.sidebar.metric(
     f"{disk.percent}%"
 )
 
-
 st.sidebar.markdown("---")
+
 
 if core_running:
 
@@ -433,13 +879,13 @@ else:
 if autonomer_running:
 
     st.sidebar.success(
-        "🟢 Nexus Autonomer actif"
+        "🟢 Autonomer actif"
     )
 
 else:
 
     st.sidebar.warning(
-        "🟡 Nexus Autonomer non détecté"
+        "🟡 Autonomer non détecté"
     )
 
 
@@ -453,6 +899,19 @@ else:
 
     st.sidebar.warning(
         "🟡 run_all non détecté"
+    )
+
+
+if web_running:
+
+    st.sidebar.success(
+        "🟢 Nexus Web actif"
+    )
+
+else:
+
+    st.sidebar.warning(
+        "🟡 Nexus Web non détecté"
     )
 
 
@@ -479,12 +938,13 @@ if st.sidebar.button(
 # ONGLETS
 # ============================================================
 
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
-        "🚀 Nexus & Activités",
-        "🤖 IA & Centre de Commandement",
-        "📊 Activité & Revenus",
-        "⚙️ Modules du serveur",
+        "🚀 Activité Nexus",
+        "🧠 Pipeline No-Code",
+        "🤖 IA & Commandement",
+        "📊 Opportunités & Revenus",
+        "⚙️ Modules",
     ]
 )
 
@@ -496,7 +956,7 @@ tab1, tab2, tab3, tab4 = st.tabs(
 with tab1:
 
     st.subheader(
-        "🚀 Activité réelle du runtime Nexus"
+        "🚀 Nexus en activité"
     )
 
     col1, col2, col3, col4 = st.columns(4)
@@ -525,8 +985,8 @@ with tab1:
     with col4:
 
         st.metric(
-            "Modules détectés",
-            len(project_modules)
+            "Événements runtime",
+            len(load_events(1000))
         )
 
 
@@ -534,78 +994,129 @@ with tab1:
 
 
     st.subheader(
-        "🧠 Centre de commandement"
+        "📡 Flux d'activité réel"
     )
 
-    st.info(
-        "Le dashboard affiche ici les informations réellement "
-        "écrites dans la mémoire de Nexus. Il ne fabrique pas "
-        "d'activité artificielle."
-    )
+    events = load_events(50)
 
+    if not events:
 
-    # --------------------------------------------------------
-    # ACTIVITÉS RÉCENTES
-    # --------------------------------------------------------
-
-    logs = load_activity_logs(30)
-
-    if logs:
-
-        for (
-            log_id,
-            timestamp,
-            task_name,
-            result,
-            revenue,
-        ) in logs:
-
-            col_a, col_b, col_c = st.columns(
-                [2, 3, 2]
-            )
-
-            with col_a:
-
-                st.caption(
-                    timestamp
-                )
-
-            with col_b:
-
-                st.write(
-                    f"**{task_name}**"
-                )
-
-            with col_c:
-
-                if revenue is not None:
-
-                    st.write(
-                        f"💰 {revenue:.2f} €"
-                    )
-
-                else:
-
-                    st.write(
-                        "—"
-                    )
-
-            st.caption(
-                f"Résultat : {result}"
-            )
-
-            st.divider()
+        st.info(
+            "Aucun événement runtime enregistré. "
+            "Nexus n'a encore transmis aucune étape à l'interface."
+        )
 
     else:
 
-        st.warning(
-            "Aucune activité enregistrée dans actions_log."
-        )
+        for event in events:
+
+            (
+                event_id,
+                timestamp,
+                event_type,
+                agent,
+                step,
+                status,
+                action,
+                target,
+                details,
+                result,
+                url,
+                metadata,
+            ) = event
+
+            status_lower = str(
+                status or ""
+            ).lower()
+
+            if status_lower in (
+                "running",
+                "processing",
+                "active",
+                "started",
+            ):
+
+                icon = "🟡"
+                css_class = "pipeline-running"
+
+            elif status_lower in (
+                "completed",
+                "success",
+                "done",
+                "finished",
+            ):
+
+                icon = "🟢"
+                css_class = "pipeline-success"
+
+            elif status_lower in (
+                "error",
+                "failed",
+                "failure",
+            ):
+
+                icon = "🔴"
+                css_class = "pipeline-error"
+
+            else:
+
+                icon = "⚪"
+                css_class = "pipeline-pending"
 
 
-    # --------------------------------------------------------
-    # PROCESSUS
-    # --------------------------------------------------------
+            st.markdown(
+                f"""
+                <div class="pipeline-card {css_class}">
+                    <div>
+                        {icon}
+                        <b>{step or event_type or "Événement"}</b>
+                        &nbsp; | &nbsp;
+                        {status or "unknown"}
+                    </div>
+
+                    <div style="margin-top:6px;">
+                        <b>Agent :</b>
+                        {agent or "non renseigné"}
+                    </div>
+
+                    <div>
+                        <b>Action :</b>
+                        {action or "non renseignée"}
+                    </div>
+
+                    <div>
+                        <b>Cible :</b>
+                        {target or "non renseignée"}
+                    </div>
+
+                    <div>
+                        <b>Détails :</b>
+                        {details or "aucun détail"}
+                    </div>
+
+                    <div>
+                        <b>Résultat :</b>
+                        {result or "aucun résultat enregistré"}
+                    </div>
+
+                    <div style="margin-top:6px; color:#94a3b8;">
+                        {timestamp}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if url:
+
+                st.code(
+                    url,
+                    language="text"
+                )
+
+
+    st.markdown("---")
+
 
     st.subheader(
         "⚙️ Processus réellement actifs"
@@ -628,23 +1139,175 @@ with tab1:
 
 
 # ============================================================
-# ONGLET 2 : IA
+# ONGLET 2
 # ============================================================
 
 with tab2:
 
     st.subheader(
-        "🤖 IA & Centre de Commandement Nexus"
+        "🧠 Pipeline d'exécution Nexus"
     )
 
-    st.markdown(
-        """
-        Les IA ne sont plus simulées dans ce dashboard.
+    st.caption(
+        "Cette vue représente uniquement les étapes que le "
+        "runtime a réellement enregistrées."
+    )
 
-        Une directive envoyée ici est enregistrée dans la file
-        `commands` afin que le runtime Nexus puisse réellement
-        la traiter.
-        """
+
+    pipeline = get_latest_pipeline()
+
+
+    if not pipeline:
+
+        st.info(
+            "Le pipeline est vide. "
+            "Aucune étape réelle n'a encore été enregistrée."
+        )
+
+    else:
+
+        # Dernières étapes uniques
+        displayed_steps = []
+
+        for event in pipeline:
+
+            step = event["step"]
+
+            if step and step not in displayed_steps:
+
+                displayed_steps.append(step)
+
+            if len(displayed_steps) >= 12:
+
+                break
+
+
+        for index, step in enumerate(
+            displayed_steps
+        ):
+
+            if index > 0:
+
+                st.markdown(
+                    "<div style='text-align:center;'>↓</div>",
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(
+                f"""
+                <div class="step-node">
+                    {index + 1}. {step}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+        st.markdown("---")
+
+        st.subheader(
+            "Dernière étape exécutée"
+        )
+
+        latest = pipeline[-1]
+
+        st.write(
+            f"**Étape :** {latest['step'] or 'non renseignée'}"
+        )
+
+        st.write(
+            f"**Agent :** {latest['agent'] or 'non renseigné'}"
+        )
+
+        st.write(
+            f"**Action :** {latest['action'] or 'non renseignée'}"
+        )
+
+        st.write(
+            f"**Statut :** {latest['status'] or 'non renseigné'}"
+        )
+
+        if latest["url"]:
+
+            st.write(
+                f"**URL :** {latest['url']}"
+            )
+
+        if latest["details"]:
+
+            st.write(
+                f"**Détails :** {latest['details']}"
+            )
+
+        if latest["result"]:
+
+            st.write(
+                f"**Résultat :** {latest['result']}"
+            )
+
+
+    st.markdown("---")
+
+    st.subheader(
+        "🤖 Agents réellement enregistrés"
+    )
+
+    agents = load_agents()
+
+    if not agents:
+
+        st.info(
+            "Aucun agent n'a encore enregistré son état."
+        )
+
+    else:
+
+        for agent in agents:
+
+            (
+                agent_id,
+                agent_name,
+                role,
+                status,
+                current_step,
+                current_task,
+                last_activity,
+                metadata,
+            ) = agent
+
+            st.markdown(
+                f"""
+                **{agent_name}**
+
+                Rôle : `{role or "non renseigné"}`
+
+                Statut : `{status or "non renseigné"}`
+
+                Étape : `{current_step or "aucune"}`
+
+                Tâche : `{current_task or "aucune"}`
+
+                Dernière activité : `{last_activity or "inconnue"}`
+                """
+            )
+
+            st.divider()
+
+
+# ============================================================
+# ONGLET 3
+# ============================================================
+
+with tab3:
+
+    st.subheader(
+        "🤖 IA & Centre de Commandement"
+    )
+
+    st.caption(
+        "Une IA sélectionnée ici ne reçoit pas une réponse "
+        "fictive du dashboard. La directive est transmise "
+        "au runtime."
     )
 
 
@@ -686,7 +1349,7 @@ with tab2:
 
 
     st.subheader(
-        "📨 Commandes en attente / récentes"
+        "📨 Commandes récentes"
     )
 
     commands = load_commands(30)
@@ -700,7 +1363,9 @@ with tab2:
             status,
         ) in commands:
 
-            status_text = str(status).lower()
+            status_text = str(
+                status
+            ).lower()
 
             if status_text == "completed":
 
@@ -725,14 +1390,17 @@ with tab2:
                 icon = "⚪"
 
             st.markdown(
-                f"{icon} **#{command_id}** "
-                f"`{timestamp}` "
-                f"**{status}**"
+                f"""
+                {icon} **#{command_id}**
+                `{timestamp}`
+                **{status}**
+                """
             )
 
             st.code(
                 text
             )
+
 
     else:
 
@@ -742,38 +1410,101 @@ with tab2:
 
 
 # ============================================================
-# ONGLET 3 : ACTIVITÉ / REVENUS
+# ONGLET 4
 # ============================================================
 
-with tab3:
+with tab4:
 
     st.subheader(
-        "📊 Activité économique réelle"
+        "📊 Opportunités détectées"
+    )
+
+    opportunities = load_opportunities(50)
+
+    if not opportunities:
+
+        st.info(
+            "Aucune opportunité réellement enregistrée."
+        )
+
+    else:
+
+        for opportunity in opportunities:
+
+            (
+                opportunity_id,
+                timestamp,
+                source,
+                title,
+                url,
+                category,
+                score,
+                status,
+                description,
+                metadata,
+            ) = opportunity
+
+            st.markdown(
+                f"""
+                ### {title or "Opportunité sans titre"}
+
+                **Source :** {source or "non renseignée"}
+
+                **Catégorie :** {category or "non renseignée"}
+
+                **Score :** {score if score is not None else "non calculé"}
+
+                **Statut :** {status or "non renseigné"}
+
+                **Détectée :** {timestamp}
+                """
+            )
+
+            if description:
+
+                st.write(
+                    description
+                )
+
+            if url:
+
+                st.code(
+                    url
+                )
+
+            st.divider()
+
+
+    st.subheader(
+        "💰 Activité économique réelle"
     )
 
     logs = load_activity_logs(100)
 
     total_revenue = 0.0
 
-    if logs:
+    for (
+        _,
+        _timestamp,
+        _task,
+        _result,
+        revenue,
+    ) in logs:
 
-        for (
-            _,
-            _timestamp,
-            _task,
-            _result,
-            revenue,
-        ) in logs:
+        if revenue is not None:
 
-            if revenue is not None:
+            try:
 
-                try:
-                    total_revenue += float(revenue)
-                except (
-                    ValueError,
-                    TypeError,
-                ):
-                    pass
+                total_revenue += float(
+                    revenue
+                )
+
+            except (
+                ValueError,
+                TypeError,
+            ):
+
+                pass
 
 
     col1, col2, col3 = st.columns(3)
@@ -795,8 +1526,8 @@ with tab3:
     with col3:
 
         st.metric(
-            "Opportunités / activités",
-            len(logs)
+            "Opportunités enregistrées",
+            len(opportunities)
         )
 
 
@@ -804,7 +1535,7 @@ with tab3:
 
 
     st.subheader(
-        "📜 Journal du runtime"
+        "📜 Journal économique"
     )
 
     if logs:
@@ -833,26 +1564,23 @@ with tab3:
     else:
 
         st.info(
-            "Le runtime n'a encore enregistré aucune activité."
+            "Aucune activité économique enregistrée."
         )
 
 
 # ============================================================
-# ONGLET 4 : MODULES
+# ONGLET 5
 # ============================================================
 
-with tab4:
+with tab5:
 
     st.subheader(
         "⚙️ Modules disponibles dans Nexus"
     )
 
-    st.markdown(
-        """
-        Cette section montre les composants présents dans
-        l'environnement. Un module n'est pas considéré comme
-        actif simplement parce que son fichier existe.
-        """
+    st.caption(
+        "La présence d'un fichier ne signifie pas que "
+        "le module est actif."
     )
 
 
@@ -866,9 +1594,13 @@ with tab4:
             filename
         )
 
-        exists = os.path.exists(filepath)
+        exists = os.path.exists(
+            filepath
+        )
 
-        active = process_running(filename)
+        active = process_running(
+            filename
+        )
 
         if active:
 
@@ -891,7 +1623,7 @@ with tab4:
 
 
     st.subheader(
-        "🚀 Lancement manuel d'un module"
+        "🚀 Lancement manuel"
     )
 
     module_candidates = [
@@ -916,7 +1648,9 @@ with tab4:
             use_container_width=True
         ):
 
-            if process_running(selected_module):
+            if process_running(
+                selected_module
+            ):
 
                 st.warning(
                     f"{selected_module} est déjà actif."
@@ -966,13 +1700,11 @@ if st.button(
     use_container_width=True
 ):
 
-    # CORRECTION DU BUG :
-    # user_command est une chaîne.
-    # Il n'existe donc pas de user_command.sys.
-
     if user_command and user_command.strip():
 
-        if send_command(user_command):
+        if send_command(
+            user_command
+        ):
 
             st.success(
                 "Ordre transmis au runtime Nexus."
@@ -986,12 +1718,32 @@ if st.button(
 
 
 # ============================================================
-# PIED DE PAGE
+# ACTUALISATION AUTOMATIQUE
 # ============================================================
 
 st.markdown("---")
 
-st.caption(
-    f"Nexus OS | Dernière actualisation : {now()}"
+col_a, col_b = st.columns(
+    [3, 1]
 )
+
+with col_a:
+
+    st.caption(
+        f"Nexus OS | Dernière actualisation : {now()}"
+    )
+
+with col_b:
+
+    auto_refresh = st.checkbox(
+        "Actualisation automatique",
+        value=False
+    )
+
+
+if auto_refresh:
+
+    time.sleep(2)
+
+    st.rerun()
 ```
