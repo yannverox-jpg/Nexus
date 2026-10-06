@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import subprocess
 import sqlite3
@@ -1746,4 +1745,3 @@ if auto_refresh:
     time.sleep(2)
 
     st.rerun()
-```
