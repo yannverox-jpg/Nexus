@@ -570,8 +570,9 @@ def render_dashboard() -> None:
             st.caption("Aucune tâche réellement enregistrée dans cette catégorie.")
 
     def render_sports_portal() -> None:
-        """Show direct links to every sports entry declared in the platform catalog."""
-        st.subheader("Plateformes de paris sportifs")
+        """Show official Android app install pages declared in the sports catalog."""
+        st.subheader("Applications Android de paris sportifs")
+        st.caption("Chaque bouton ouvre la fiche Google Play ou la page Android officielle de l’opérateur. Les applications s’installent sur un appareil Android; elles ne s’exécutent pas dans le tableau de bord Render.")
         try:
             integration_status = _get_json(base_url, "/api/v1/integrations/status")
             catalog = [
@@ -579,7 +580,7 @@ def render_dashboard() -> None:
                 if item.get("category") == "sports" and item.get("url")
             ]
         except RuntimeError as exc:
-            st.error(f"Les liens des plateformes ne sont pas disponibles : {exc}")
+            st.error(f"Les fiches des applications Android ne sont pas disponibles : {exc}")
             return
 
         for start in range(0, len(catalog), 2):
