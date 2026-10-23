@@ -1,0 +1,32 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <package android:name="com.betway.gh" />
+        <package android:name="com.draftkings.sportsbook" />
+        <package android:name="com.fanduel.sportsbook" />
+        <package android:name="com.playmgm.nj.sports" />
+        <package android:name="com.bet365SportsNJ.Bet365_ApplicationNJ" />
+        <package android:name="com.williamhill.us.nj.sports" />
+        <package android:name="com.betfanatics.sportsbook.android" />
+        <package android:name="com.rush.ri" />
+        <package android:name="com.betfair.sportsbook" />
+        <package android:name="com.paddypower.sportsbook.u.inhouse" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="Nexus Sports"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
