@@ -1,123 +1,183 @@
-import asyncio
-import random
-import time
-import numpy as np
-from typing import Optional, Dict, Any
+"""Policy-aware Playwright browsing without stealth or human impersonation."""
+
+from __future__ import annotations
+
+import os
+from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 
 try:
     from playwright.async_api import async_playwright
 except ImportError:
     async_playwright = None
 
-class HumanAgent:
-    """
-    Agent de navigation furtive biomimétique.
-    - Contournement des sondes de détection (navigator.webdriver, plugins, user agent).
-    - Mouvements de souris organiques basés sur des courbes de Bézier.
-    - Frappe au clavier stochastique avec pauses variables.
-    - Hook de capture visuelle pour modèles de vision (MLLM).
-    """
-    def __init__(self, headless: bool = True):
+
+class BrowserAgent:
+    """Read-only browser navigation for explicitly allowlisted domains."""
+
+    def __init__(
+        self,
+        headless: bool = True,
+        browser_name: str = "chromium",
+        allowed_domains: Optional[list[str]] = None,
+    ):
+        if browser_name not in {"chromium", "firefox"}:
+            raise ValueError("browser_name must be chromium or firefox")
         self.headless = headless
+        self.browser_name = browser_name
+        configured_domains = os.getenv("NEXUS_BROWSER_ALLOWED_HOSTS", "").split(",")
+        self.allowed_domains = frozenset(
+            domain.strip().casefold().lstrip(".")
+            for domain in (allowed_domains or configured_domains)
+            if domain.strip()
+        )
+        self.playwright = None
         self.browser = None
         self.context = None
         self.page = None
+        self.execution_mode = "UNAVAILABLE"
+        self._journal_context = None
 
-    async def initialize(self):
+    def bind_journal(
+        self, journal: Any, task_id: str, attempt_id: str,
+        execution_mode: str, source: str = "BrowserAgent",
+    ) -> None:
+        mode = execution_mode.upper()
+        if mode not in ("REAL", "SIMULATED"):
+            raise ValueError("Browser execution mode must be REAL or SIMULATED")
+        self._journal_context = {
+            "journal": journal,
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "execution_mode": mode,
+            "source": source,
+        }
+
+    def clear_journal(self) -> None:
+        self._journal_context = None
+
+    async def _journaled_operation(
+        self, operation: str, target: Optional[str], request: Dict[str, Any],
+        callback: Callable[[], Any], *,
+        response: Optional[Callable[[Any], Optional[Dict[str, Any]]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        context = self._journal_context
+        if context is None:
+            result = callback()
+            return await result if hasattr(result, "__await__") else result
+
+        journal = context["journal"]
+        call_id = journal.start_tool_call(
+            context["task_id"], context["attempt_id"], "playwright", operation,
+            execution_mode=context["execution_mode"], target=target,
+            request=request, source=context["source"], metadata=metadata or {},
+        )
+        try:
+            result = callback()
+            if hasattr(result, "__await__"):
+                result = await result
+        except Exception as exc:
+            journal.finish_tool_call(
+                call_id, status="FAILED", error=str(exc), source=context["source"],
+            )
+            raise
+        response_data = response(result) if response else None
+        journal.finish_tool_call(
+            call_id, status="COMPLETED", response=response_data,
+            source=context["source"],
+        )
+        return result
+
+    async def initialize(self) -> None:
         if async_playwright is None:
-            print("[STEALTH AGENT] Playwright non disponible (mode simulation).")
-            return
+            self.execution_mode = "UNAVAILABLE"
+            raise RuntimeError("Playwright is not installed; browser navigation is unavailable")
 
-        playwright = await async_playwright().start()
-
-        # Lancement avec des arguments pour limiter la détection bot
-        self.browser = await playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-infobars",
-                "--disable-dev-shm-usage",
-            ]
+        self.playwright = await self._journaled_operation(
+            "launch_driver", "playwright", {"headless": self.headless},
+            lambda: async_playwright().start(),
         )
-
-        # Création d'un contexte simulant un vrai utilisateur (résolution, langue, etc.)
-        self.context = await self.browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            locale="fr-FR",
-            timezone_id="Europe/Paris"
+        engine = getattr(self.playwright, self.browser_name)
+        self.browser = await self._journaled_operation(
+            "launch_browser", self.browser_name, {"headless": self.headless},
+            lambda: engine.launch(headless=self.headless),
         )
+        self.context = await self._journaled_operation(
+            "create_context", self.browser_name, {},
+            lambda: self.browser.new_context(),
+        )
+        self.page = await self._journaled_operation(
+            "create_page", "browser_context", {},
+            lambda: self.context.new_page(),
+        )
+        self.execution_mode = "REAL"
 
-        # Injection de scripts pour masquer l'empreinte WebDriver
-        await self.context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            window.navigator.chrome = { runtime: {} };
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        """)
+    def _assert_allowed_url(self, url: str) -> None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").casefold()
+        if parsed.scheme not in {"http", "https"} or not host:
+            raise ValueError("Only absolute HTTP(S) URLs are supported")
+        if not self.allowed_domains:
+            raise PermissionError("Browser navigation is disabled until an allowed-host list is configured")
+        if not any(host == domain or host.endswith("." + domain) for domain in self.allowed_domains):
+            raise PermissionError(f"The host {host} is not in NEXUS_BROWSER_ALLOWED_HOSTS")
 
-        self.page = await self.context.new_page()
-
-    async def human_move_to(self, target_x: float, target_y: float):
-        """Simule un mouvement de souris fluide basé sur des courbes de Bézier."""
+    async def navigate(self, url: str) -> Optional[str]:
+        self._assert_allowed_url(url)
         if not self.page:
-            return
-        current_mouse = self.page.mouse
-        start_x, start_y = random.randint(100, 500), random.randint(100, 500)
-
-        control_x = (start_x + target_x) / 2 + random.randint(-100, 100)
-        control_y = (start_y + target_y) / 2 + random.randint(-100, 100)
-
-        steps = random.randint(25, 50)
-        for i in range(steps + 1):
-            t = i / steps
-            x = (1 - t)**2 * start_x + 2 * (1 - t) * t * control_x + t**2 * target_x
-            y = (1 - t)**2 * start_y + 2 * (1 - t) * t * control_y + t**2 * target_y
-
-            await current_mouse.move(x, y)
-            await asyncio.sleep(random.uniform(0.005, 0.02))
-
-    async def human_type(self, selector: str, text: str):
-        """Frappe du texte avec des délais aléatoires entre chaque touche."""
-        if not self.page:
-            return
-        await self.page.click(selector)
-        for char in text:
-            await self.page.keyboard.type(char)
-            delay = random.uniform(0.08, 0.25)
-            if char in [' ', '.', ',']:
-                delay += random.uniform(0.1, 0.3)
-            await asyncio.sleep(delay)
+            self.execution_mode = "UNAVAILABLE"
+            raise RuntimeError("Browser is not initialized")
+        await self._journaled_operation(
+            "navigate", url, {"wait_until": "page_default"},
+            lambda: self.page.goto(url),
+            response=lambda _: {"url": self.page.url},
+        )
+        return self.page.url
 
     async def capture_screen_for_vision(self) -> Optional[bytes]:
-        """Capture l'écran pour l'envoyer à un modèle de vision (ex: MLLM)."""
         if not self.page:
-            return b"MOCK_SCREENSHOT_BYTES"
-        screenshot_bytes = await self.page.screenshot(full_page=False)
-        return screenshot_bytes
+            return None
+        return await self._journaled_operation(
+            "capture_screenshot", "current_page", {"full_page": False},
+            lambda: self.page.screenshot(full_page=False),
+            response=lambda _: None,
+            metadata={"content_persisted": False},
+        )
 
-    async def navigate_and_act(self, url: str):
+    async def navigate_and_act(self, url: str) -> Optional[bytes]:
+        """Compatibility entry point; navigates and captures, but performs no page actions."""
+        await self.navigate(url)
+        return await self.capture_screen_for_vision()
+
+    async def human_move_to(self, target_x: float, target_y: float) -> None:
+        """Deprecated compatibility wrapper; moves directly without human simulation."""
         if not self.page:
-            print(f"[*] Simulation navigation vers {url}")
-            return
-        await self.page.goto(url)
-        print("[*] Page chargée avec une empreinte masquée.")
-        screenshot = await self.capture_screen_for_vision()
-        print("[*] Capture d'écran acquise pour analyse visuelle (simulation).")
-        await self.human_move_to(500, 300)
-        await asyncio.sleep(1)
+            raise RuntimeError("Browser is not initialized")
+        await self._journaled_operation(
+            "move_pointer", "current_page", {"x": target_x, "y": target_y},
+            lambda: self.page.mouse.move(target_x, target_y),
+        )
 
-    async def close(self):
-        if self.browser:
-            await self.browser.close()
+    async def human_type(self, selector: str, text: str) -> None:
+        """Form entry is disabled; login, payment, and other submissions require a human."""
+        raise PermissionError("Automated form entry is disabled; complete sensitive forms manually")
 
-async def main():
-    agent = HumanAgent(headless=True)
-    await agent.initialize()
-    try:
-        await agent.navigate_and_act("https://bot.sannysoft.com/")
-    finally:
-        await agent.close()
+    async def close(self) -> None:
+        try:
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+        finally:
+            if self.playwright:
+                await self.playwright.stop()
+            self.page = None
+            self.context = None
+            self.browser = None
+            self.playwright = None
+            self.execution_mode = "UNAVAILABLE"
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+# Keep the old import name available while removing its stealth behavior.
+HumanAgent = BrowserAgent

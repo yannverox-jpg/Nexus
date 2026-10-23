@@ -1,0 +1,85 @@
+"""Small SQLite-backed conversation memory shared with OperationalJournal."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+import uuid
+from contextlib import contextmanager
+
+
+def configured_database_path() -> str:
+    return os.getenv("NEXUS_OPERATIONAL_DB_PATH", "nexus_operational.db")
+
+
+class ConversationMemory:
+    """Persist chat history in the operational SQLite database, never API keys."""
+
+    def __init__(self, db_path: Optional[str] = None, timeout: float = 30.0):
+        self.db_path = db_path or configured_database_path()
+        self.timeout = timeout
+        self._memory_uri = None
+        self._keeper = None
+        if self.db_path == ":memory:":
+            self._memory_uri = f"file:nexus_chat_{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._keeper = sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
+        elif not self.db_path.startswith("file:"):
+            Path(self.db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        path = self._memory_uri or self.db_path
+        conn = sqlite3.connect(path, timeout=self.timeout,
+                               uri=path.startswith("file:"), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
+        if not self._memory_uri:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = FULL")
+        return conn
+
+    @contextmanager
+    def _connection(self):
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _initialize(self) -> None:
+        with self._connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS nexus_chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_nexus_chat_created ON nexus_chat_messages(conversation_id, id)")
+
+    def add_message(self, conversation_id: str, role: str, content: str,
+                    provider: str, model: str) -> int:
+        if role not in {"user", "assistant"}:
+            raise ValueError("Unsupported chat role")
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO nexus_chat_messages(conversation_id,role,content,provider,model) VALUES(?,?,?,?,?)",
+                (conversation_id, role, content, provider, model),
+            )
+            return int(cursor.lastrowid)
+
+    def recent_messages(self, conversation_id: str, limit: int = 40) -> List[Dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id,conversation_id,role,content,provider,model,created_at "
+                "FROM nexus_chat_messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?",
+                (conversation_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
