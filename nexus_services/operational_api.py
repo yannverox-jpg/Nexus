@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
-import time
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
@@ -80,14 +78,6 @@ class OAuthStartRequest(StrictRequest):
 class OAuthCallbackRequest(StrictRequest):
     code: str
     state: str
-
-
-class GhostPreviewRequest(StrictRequest):
-    symbol: str
-    bid: float
-    ask: float
-    usd_speed: float = 0.0
-    terminal_latency_ms: float = 0.0
 
 
 app = FastAPI(
@@ -232,93 +222,6 @@ def disconnect_provider(provider_id: str):
         return connection_manager.disconnect(provider_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/ghost/mt5/preflight")
-def ghost_mt5_preflight():
-    """Read-only MT5 terminal check. Never submits, edits, or closes an order."""
-    if sys.platform != "win32":
-        return {
-            "status": "UNAVAILABLE_ON_HOST",
-            "host_platform": sys.platform,
-            "detail": "Le connecteur MetaTrader 5 nécessite un terminal Windows local; aucun pont MT5 n’est relié à ce service.",
-            "orders_submitted": 0,
-        }
-    try:
-        import MetaTrader5 as mt5
-    except ImportError:
-        return {
-            "status": "SDK_NOT_INSTALLED",
-            "host_platform": sys.platform,
-            "detail": "Le paquet MetaTrader5 n’est pas installé sur cet hôte.",
-            "orders_submitted": 0,
-        }
-    try:
-        if not mt5.initialize():
-            return {
-                "status": "TERMINAL_NOT_CONNECTED",
-                "host_platform": sys.platform,
-                "error_code": int(mt5.last_error()[0]),
-                "orders_submitted": 0,
-            }
-        symbols = [item.strip() for item in os.getenv("NEXUS_MT5_SYMBOLS", "EURUSD,XAUUSD,GBPUSD").split(",") if item.strip()]
-        quotes = []
-        for symbol in symbols:
-            started = time.perf_counter()
-            tick = mt5.symbol_info_tick(symbol)
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            if tick is not None:
-                quotes.append({
-                    "symbol": symbol,
-                    "bid": float(tick.bid),
-                    "ask": float(tick.ask),
-                    "quote_time_ms": int(getattr(tick, "time_msc", 0)),
-                    "terminal_call_latency_ms": round(elapsed_ms, 3),
-                })
-        return {
-            "status": "CONNECTED" if quotes else "CONNECTED_NO_QUOTES",
-            "host_platform": sys.platform,
-            "quotes": quotes,
-            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "orders_submitted": 0,
-        }
-    finally:
-        mt5.shutdown()
-
-
-@app.post("/api/v1/ghost/preview")
-def ghost_preview(request: GhostPreviewRequest):
-    """Run Ghost's existing spread/liquidity formulas on explicitly supplied scenario data."""
-    from .ghost_institutional_predictive_engine import TopologicalCointegrationGraph
-
-    symbol = request.symbol.strip().upper()
-    if not symbol or len(symbol) > 20 or request.bid <= 0 or request.ask <= 0 or request.ask < request.bid:
-        raise HTTPException(status_code=400, detail="Symbol or bid/ask scenario values are invalid")
-    graph = TopologicalCointegrationGraph()
-    graph.update_tick_matrix({symbol: {"bid": request.bid, "ask": request.ask}})
-    if request.terminal_latency_ms > 0 or request.usd_speed != 0:
-        usd_state = graph.asset_states["USD"]
-        usd_state.update_vector(0.0, request.usd_speed, 0.0, 0.0, 0.0, request.terminal_latency_ms)
-    spread = graph.spread_states.get(symbol)
-    if spread is None:
-        raise HTTPException(status_code=400, detail="Symbol absent from Ghost's current pair graph")
-    started = time.perf_counter()
-    report = spread.generate_liquidity_report()
-    distortions = graph.calculate_residual_distortion()
-    compute_ms = (time.perf_counter() - started) * 1000
-    return {
-        "mode": "SCENARIO",
-        "source": "user_supplied_values",
-        "orders_submitted": 0,
-        "symbol": symbol,
-        "bid": request.bid,
-        "ask": request.ask,
-        "spread": round(request.ask - request.bid, 8),
-        "spread_model": report,
-        "propagation_hypotheses": distortions,
-        "input_terminal_latency_ms": request.terminal_latency_ms or None,
-        "ghost_compute_latency_ms": round(compute_ms, 4),
-    }
 
 
 @app.post("/api/v1/advisory/{agent_name}")
