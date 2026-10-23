@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from .agent_roles import build_agent_system_context, get_provider_status, get_role_assignments
 from .ai_connectors import CONNECTORS
+from .connection_manager import ConnectionManager
 from .platform_catalog import get_platform_catalog
 from .stealth_browser_agent import BrowserAgent, async_playwright
 from .operational_dashboard import dashboard_overview, mission_detail, task_detail
@@ -19,6 +20,7 @@ from .runtime_contracts import OperationalJournal
 database_path = configured_database_path()
 journal = OperationalJournal(database_path)
 payout_ledger = PayoutLedger(database_path)
+connection_manager = ConnectionManager(database_path)
 _browser_agent: BrowserAgent | None = None
 
 
@@ -67,6 +69,17 @@ class PayoutOrderRequest(StrictRequest):
 class PayoutUpdateRequest(StrictRequest):
     status: str
     external_reference: str
+
+
+class OAuthStartRequest(StrictRequest):
+    remember_me: bool = False
+
+
+class OAuthCallbackRequest(StrictRequest):
+    code: str
+    state: str
+
+
 app = FastAPI(
     title="Nexus Operational API",
     docs_url=None,
@@ -181,7 +194,34 @@ def get_integration_status():
             "navigation_configured": async_playwright is not None and bool(domains),
         },
         "platform_catalog": get_platform_catalog(),
+        "connections": connection_manager.list_connections(),
     }
+
+
+@app.post("/api/v1/connections/{provider_id}/oauth/start")
+def start_provider_oauth(provider_id: str, request: OAuthStartRequest):
+    try:
+        return connection_manager.start_oauth(provider_id, request.remember_me)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/connections/oauth/callback")
+def finish_provider_oauth(request: OAuthCallbackRequest):
+    try:
+        return connection_manager.complete_oauth(request.code, request.state)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/v1/connections/{provider_id}")
+def disconnect_provider(provider_id: str):
+    try:
+        return connection_manager.disconnect(provider_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/advisory/{agent_name}")

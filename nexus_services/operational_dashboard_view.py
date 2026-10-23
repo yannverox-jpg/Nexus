@@ -40,6 +40,101 @@ def _post_json(base_url: str, path: str, payload: Dict[str, Any]) -> Dict[str, A
     return data
 
 
+def _delete_json(base_url: str, path: str) -> Dict[str, Any]:
+    request = Request(f"{base_url.rstrip('/')}{path}", method="DELETE")
+    try:
+        with urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Connection operation unavailable: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Connection operation returned an invalid response")
+    return data
+
+
+def _handle_oauth_callback(base_url: str) -> None:
+    """Complete a provider redirect and immediately remove callback data from the URL."""
+    code = st.query_params.get("code")
+    state = st.query_params.get("state")
+    error = st.query_params.get("error")
+    if error:
+        st.error("Le fournisseur a refusé ou annulé la connexion.")
+        st.query_params.clear()
+    elif code and state:
+        try:
+            result = _post_json(base_url, "/api/v1/connections/oauth/callback", {
+                "code": str(code), "state": str(state),
+            })
+        except RuntimeError as exc:
+            st.error(f"La connexion OAuth n’a pas abouti : {exc}")
+        else:
+            st.success(f"Compte connecté : {result.get('provider_id')}.")
+        finally:
+            st.query_params.clear()
+
+
+def _render_managed_connections(base_url: str, integrations: Dict[str, Any]) -> None:
+    st.subheader("Connexions de comptes")
+    st.caption(
+        "Connecte les comptes via OAuth officiel. Nexus chiffre les jetons et peut les renouveler "
+        "quand le fournisseur l’autorise. Les agents peuvent travailler automatiquement dans "
+        "les limites définies par les autorisations et règles du compte. Aucun mot de passe, "
+        "cookie, numéro complet de carte ni CVV n’est enregistré ici."
+    )
+    connection_data = integrations.get("connections", {})
+    storage = connection_data.get("storage", {})
+    if storage.get("remember_me_ready"):
+        st.success("Le stockage chiffré et persistant permet les sessions mémorisées.")
+    elif storage.get("reason") == "encryption_key_missing":
+        st.warning("Sessions mémorisées indisponibles : la clé de chiffrement doit être configurée dans les secrets Render.")
+    else:
+        st.warning("Sessions mémorisées indisponibles : un stockage persistant est requis sur Render.")
+
+    providers = connection_data.get("providers", [])
+    if not providers:
+        st.info("Aucun fournisseur OAuth configuré. Chaque plateforme doit proposer une intégration officielle compatible.")
+        return
+    for provider in providers:
+        with st.container(border=True):
+            left, right = st.columns([3, 2])
+            left.markdown(f"**{provider.get('name', provider.get('provider_id'))}**")
+            scopes = ", ".join(provider.get("scopes", [])) or "aucune"
+            left.caption(f"État : {provider.get('status', 'NOT_CONNECTED')} · Autorisations : {scopes}")
+            if provider.get("error_code"):
+                left.caption(f"Action requise : {provider['error_code']}")
+            if provider.get("status") in ("AUTHORIZED", "RECONNECT_REQUIRED"):
+                if right.button("Déconnecter", key=f"disconnect_{provider['provider_id']}"):
+                    try:
+                        _delete_json(base_url, f"/api/v1/connections/{provider['provider_id']}")
+                    except RuntimeError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success("Compte déconnecté.")
+                        st.rerun()
+            else:
+                remember = right.checkbox(
+                    "Se souvenir de moi", value=False,
+                    disabled=not provider.get("remember_me_available", False),
+                    key=f"remember_{provider['provider_id']}",
+                )
+                if right.button(
+                    "Connecter le compte", key=f"connect_{provider['provider_id']}",
+                    disabled=not provider.get("configured", False),
+                ):
+                    try:
+                        result = _post_json(
+                            base_url,
+                            f"/api/v1/connections/{provider['provider_id']}/oauth/start",
+                            {"remember_me": remember},
+                        )
+                    except RuntimeError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.link_button("Autoriser chez le fournisseur", result["authorization_url"])
+            if not provider.get("configured"):
+                left.caption("Configuration OAuth incomplète côté serveur.")
+
+
 def _render_payouts(base_url: str) -> None:
     st.subheader("Suivi des revenus et versements")
     st.caption(
@@ -302,6 +397,8 @@ def render_dashboard() -> None:
         base_url = st.text_input("URL de base", value=default_url)
         st.button("Rafraîchir les données")
 
+    _handle_oauth_callback(base_url)
+
     try:
         overview = _get_json(base_url, "/api/v1/operational/overview")
     except RuntimeError as exc:
@@ -553,6 +650,8 @@ def render_dashboard() -> None:
         except RuntimeError as exc:
             st.error(f"Diagnostic indisponible : {exc}")
         else:
+            _render_managed_connections(base_url, integrations)
+            st.divider()
             browser = integrations["browser"]
             st.write("**Rôles déclarés dans Nexus**")
             role_rows = [
@@ -578,7 +677,7 @@ def render_dashboard() -> None:
             st.write("**Navigateur**")
             st.json(browser)
             st.write("**Navigation web en lecture seule**")
-            st.caption("La cible doit figurer dans NEXUS_BROWSER_ALLOWED_HOSTS. Nexus ne remplit aucun formulaire et ne se connecte pas aux comptes.")
+            st.caption("La cible doit figurer dans NEXUS_BROWSER_ALLOWED_HOSTS. Cette navigation sert au diagnostic; les connexions de compte passent par OAuth officiel.")
             selected_browser = st.selectbox("Navigateur", ("chromium", "firefox"), key="nexus_browser_engine")
             requested_url = st.text_input("Adresse web autorisée", key="nexus_browser_url")
             if st.button("Ouvrir et observer", key="nexus_browser_navigate"):
@@ -623,10 +722,7 @@ def render_dashboard() -> None:
                         right.caption("Non connecté")
             else:
                 st.info("Le catalogue fixe ne contient aucune plateforme pour cette catégorie.")
-            st.caption(
-                "Un statut configuré ne signifie pas qu’une session de compte est ouverte. "
-                "Nexus ne récupère aucun cookie, mot de passe ou session. Les connexions de compte restent manuelles."
-            )
+            st.caption("Un statut de catalogue ne prouve pas qu’un compte est connecté. Consulte la section Connexions de comptes ci-dessus pour l’état OAuth réel.")
 
     with overview_tabs[12]:
         _render_payouts(base_url)
