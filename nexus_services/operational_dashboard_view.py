@@ -569,14 +569,46 @@ def render_dashboard() -> None:
         else:
             st.caption("Aucune tâche réellement enregistrée dans cette catégorie.")
 
+    def render_sports_portal() -> None:
+        """Show direct links to every sports entry declared in the platform catalog."""
+        st.subheader("Plateformes de paris sportifs")
+        try:
+            integration_status = _get_json(base_url, "/api/v1/integrations/status")
+            catalog = [
+                item for item in integration_status.get("platform_catalog", [])
+                if item.get("category") == "sports" and item.get("url")
+            ]
+        except RuntimeError as exc:
+            st.error(f"Les liens des plateformes ne sont pas disponibles : {exc}")
+            return
+
+        for start in range(0, len(catalog), 2):
+            columns = st.columns(2)
+            for column, platform in zip(columns, catalog[start:start + 2]):
+                with column.container(border=True):
+                    st.markdown(f"### {platform['name']}")
+                    st.caption(platform.get("source", "Plateforme sportive"))
+                    st.link_button(
+                        platform.get("connection_mode", "Ouvrir"),
+                        platform["url"],
+                        use_container_width=True,
+                    )
+        if not catalog:
+            st.caption("Aucune plateforme sportive n’est déclarée dans le catalogue.")
+
     for tab, title, category, keywords in (
         (overview_tabs[1], "Microservices", "microservices", ("microservice", "micro-task", "gig", "service")),
         (overview_tabs[2], "E-commerce", "ecommerce", ("ecommerce", "e-commerce", "product", "affiliate", "catalogue")),
         (overview_tabs[3], "Trading", "trading", ("trading", "trade", "market", "broker", "mt5")),
         (overview_tabs[4], "Paris sportifs", "sports", ("sports", "bet", "wager", "football", "1xbet")),
     ):
+        if category == "sports":
+            continue
         with tab:
             render_category(title, category, keywords)
+
+    with overview_tabs[4]:
+        render_sports_portal()
 
     with overview_tabs[5]:
         _render_ghost_console(overview)
