@@ -542,12 +542,18 @@ def render_dashboard() -> None:
         ]
         st.write("**Plateformes**")
         if catalog:
-            st.dataframe(
-                [
-                    {"Plateforme": item.get("name"), "Catégorie": title}
-                    for item in catalog
-                ], use_container_width=True, hide_index=True,
-            )
+            for start in range(0, len(catalog), 2):
+                columns = st.columns(2)
+                for column, platform in zip(columns, catalog[start:start + 2]):
+                    with column.container(border=True):
+                        st.markdown(f"#### {platform.get('name', 'Plateforme')}")
+                        st.caption(platform.get("source", "Plateforme répertoriée"))
+                        st.markdown(f"**État :** {platform.get('connection_mode', 'À configurer')}")
+                        url = platform.get("url")
+                        if url:
+                            st.link_button("Ouvrir l’application Android officielle", url, use_container_width=True)
+                        else:
+                            st.caption("Aucun lien d’application officielle vérifié dans le catalogue.")
         else:
             st.caption("Aucune plateforme déclarée pour cette catégorie.")
         st.markdown("**Tâches du département**")
@@ -643,7 +649,7 @@ def render_dashboard() -> None:
 
     with overview_tabs[6]:
         st.subheader("Chat IA · Codex / Claude")
-        st.caption("Espace de travail des agents Nexus.")
+        st.caption("Claude en ligne peut recevoir le contexte préparé ici. L’ouverture de Claude ne transmet pas automatiquement les comptes ni les tâches Nexus.")
         selected_agent = st.selectbox("Agent", ("gpt", "claude"), key="nexus_advisory_agent")
         selected_domain = st.selectbox("Domaine", ("general", "microservices", "ecommerce", "trading", "sports", "ghost"), key="nexus_advisory_domain")
         advisory_message = st.text_area("Objectif ou question", key="nexus_advisory_message")
@@ -660,6 +666,37 @@ def render_dashboard() -> None:
                     st.error(str(exc))
         if st.session_state.get("nexus_advisory_response"):
             st.json(st.session_state["nexus_advisory_response"])
+
+        st.markdown("#### Préparer le travail pour Claude en ligne")
+        claude_goal = st.text_area(
+            "Travail à lancer avec Claude",
+            value="Repère les missions réalisables, prépare les offres de services et le plan de lancement des boutiques sans inventer de compte, commande ou revenu.",
+            key="nexus_claude_goal",
+        )
+        try:
+            claude_platforms = [
+                item.get("name", "") for item in _get_json(base_url, "/api/v1/integrations/status").get("platform_catalog", [])
+                if item.get("category") in {"microservices", "ecommerce"}
+            ]
+        except RuntimeError:
+            claude_platforms = []
+        active_work = [
+            f"{task.get('task_id')} · {task.get('task_type')} · {task.get('status')}"
+            for task in tasks if task.get("status") in {"PLANNED", "QUEUED", "RUNNING", "WAITING_APPROVAL", "WAITING_HUMAN"}
+        ]
+        claude_context = (
+            "Tu travailles avec Nexus sur les départements microservices et e-commerce. "
+            f"Plateformes affichées : {', '.join(claude_platforms) if claude_platforms else 'catalogue indisponible'}. "
+            "Les comptes ne sont pas présumés connectés. Propose des actions légales et concrètes, "
+            "respecte les règles des plateformes, ne crée pas de faux comptes, n’engage pas de dépense, "
+            "ne prétends pas avoir créé une boutique ou terminé une tâche, et indique les accès ou contenus "
+            "qu’il faut configurer directement chez chaque plateforme. Les revenus doivent rester à zéro "
+            "tant qu’ils ne sont pas étayés par une preuve.\n\nTravail Nexus actuellement suivi : "
+            f"{'; '.join(active_work) if active_work else 'aucune tâche active enregistrée'}.\n\nObjectif : "
+            f"{claude_goal.strip()}"
+        )
+        st.text_area("Contexte prêt à copier dans Claude", value=claude_context, height=170, key="nexus_claude_context_preview")
+        st.link_button("Ouvrir Claude en ligne", "https://claude.ai/new", use_container_width=True)
 
     with overview_tabs[7]:
         st.subheader("Comptes et plateformes")
