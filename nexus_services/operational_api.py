@@ -237,7 +237,11 @@ def advisory_chat(agent_name: str, request: AdvisoryChatRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        return CONNECTORS[provider_id].complete(request.message, system=system_context)
+        return CONNECTORS[provider_id].complete(
+            request.message,
+            system=system_context,
+            google_search=provider_id == "gemini" and request.domain == "sports",
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

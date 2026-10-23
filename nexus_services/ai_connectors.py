@@ -42,7 +42,13 @@ class ProviderConnector:
             "model": os.getenv(self.model_env, self.default_model),
         }
 
-    def complete(self, prompt: str, *, system: str = "") -> dict[str, Any]:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        google_search: bool = False,
+    ) -> dict[str, Any]:
         """Call the configured official API and return advisory text only."""
         api_key = os.getenv(self.api_key_env, "").strip()
         if not api_key:
@@ -52,7 +58,9 @@ class ProviderConnector:
 
         endpoint = os.getenv(self.endpoint_env, self.default_endpoint).strip()
         model = os.getenv(self.model_env, self.default_model).strip()
-        payload, response_path = self._request_payload(prompt, system, model)
+        payload, response_path = self._request_payload(
+            prompt, system, model, google_search=google_search,
+        )
         if self.provider_id == "gemini":
             endpoint = f"{endpoint.format(model=model)}?key={api_key}"
         request = Request(
@@ -70,7 +78,7 @@ class ProviderConnector:
             raise RuntimeError(f"{self.provider_id} API is unavailable") from exc
 
         text = self._extract_text(data, response_path)
-        return {
+        result = {
             "provider": self.provider_id,
             "model": model,
             "status": "ADVISORY",
@@ -78,13 +86,27 @@ class ProviderConnector:
             "can_execute_actions": False,
             "text": text,
         }
+        if self.provider_id == "gemini" and google_search:
+            result["sources"] = self._gemini_sources(data)
+            result["grounding"] = "google_search"
+        return result
 
-    def _request_payload(self, prompt: str, system: str, model: str) -> tuple[dict[str, Any], str]:
+    def _request_payload(
+        self,
+        prompt: str,
+        system: str,
+        model: str,
+        *,
+        google_search: bool = False,
+    ) -> tuple[dict[str, Any], str]:
         if self.provider_id == "gemini":
-            return {
+            payload = {
                 "systemInstruction": {"parts": [{"text": system}]} if system else None,
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            }, "candidates.0.content.parts.0.text"
+            }
+            if google_search:
+                payload["tools"] = [{"google_search": {}}]
+            return payload, "candidates.0.content.parts.0.text"
         if self.provider_id == "claude":
             return {
                 "model": model,
@@ -121,6 +143,23 @@ class ProviderConnector:
             raise RuntimeError("Provider returned no advisory text")
         return value.strip()
 
+    @staticmethod
+    def _gemini_sources(data: dict[str, Any]) -> list[dict[str, str]]:
+        candidates = data.get("candidates", [])
+        if not candidates or not isinstance(candidates[0], dict):
+            return []
+        metadata = candidates[0].get("groundingMetadata", {})
+        chunks = metadata.get("groundingChunks", []) if isinstance(metadata, dict) else []
+        sources: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for chunk in chunks:
+            web = chunk.get("web", {}) if isinstance(chunk, dict) else {}
+            uri = web.get("uri") if isinstance(web, dict) else None
+            if isinstance(uri, str) and uri.startswith("https://") and uri not in seen:
+                sources.append({"title": str(web.get("title") or uri), "url": uri})
+                seen.add(uri)
+        return sources
+
 CONNECTORS = {
     "codex_gpt": ProviderConnector(
         "codex_gpt", "Codex / GPT", "reasoning and coordination",
@@ -129,7 +168,7 @@ CONNECTORS = {
     ),
     "gemini": ProviderConnector(
         "gemini", "Gemini", "research and evidence review",
-        "NEXUS_GEMINI_API_KEY", "NEXUS_GEMINI_MODEL", "gemini-2.0-flash",
+        "NEXUS_GEMINI_API_KEY", "NEXUS_GEMINI_MODEL", "gemini-3.8-flash",
         "NEXUS_GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
     ),
     "claude": ProviderConnector(

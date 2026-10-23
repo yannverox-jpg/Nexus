@@ -572,7 +572,7 @@ def render_dashboard() -> None:
     def render_sports_portal() -> None:
         """Show official Android app install pages declared in the sports catalog."""
         st.subheader("Applications Android de paris sportifs")
-        st.caption("Chaque bouton ouvre la fiche Google Play ou la page Android officielle de l’opérateur. Les applications s’installent sur un appareil Android; elles ne s’exécutent pas dans le tableau de bord Render.")
+        st.caption("Google Play ouvre l’installation officielle; les opérateurs qui distribuent un APK ouvrent leur propre page de téléchargement. Nexus ne stocke pas de copie d’APK et les applications s’installent sur Android.")
         try:
             integration_status = _get_json(base_url, "/api/v1/integrations/status")
             catalog = [
@@ -590,12 +590,55 @@ def render_dashboard() -> None:
                     st.markdown(f"### {platform['name']}")
                     st.caption(platform.get("source", "Plateforme sportive"))
                     st.link_button(
-                        platform.get("connection_mode", "Ouvrir"),
+                        "Installer depuis Google Play"
+                        if platform.get("status") == "ANDROID_APP_GOOGLE_PLAY"
+                        else "Télécharger l’APK officiel",
                         platform["url"],
                         use_container_width=True,
                     )
         if not catalog:
             st.caption("Aucune plateforme sportive n’est déclarée dans le catalogue.")
+
+        st.divider()
+        st.subheader("Gemini en ligne · analyse sportive")
+        try:
+            providers = integration_status.get("ai_providers", [])
+            gemini = next((item for item in providers if item.get("provider_id") == "gemini"), {})
+        except (TypeError, AttributeError):
+            gemini = {}
+        gemini_ready = bool(gemini.get("connector_available"))
+        if gemini_ready:
+            st.success(f"Clé Gemini configurée · {gemini.get('model', 'modèle par défaut')} · recherche Google activée pour ce domaine.")
+        else:
+            st.warning("Gemini n’est pas configuré côté serveur. Ajoute NEXUS_GEMINI_API_KEY dans les variables Render pour activer l’analyse en ligne.")
+
+        with st.form("nexus_sports_gemini_form"):
+            sports_question = st.text_area(
+                "Match, cotes et éléments à vérifier",
+                placeholder="Indique la rencontre, les cotes observées et les informations dont tu disposes…",
+                key="nexus_sports_gemini_question",
+            )
+            analyze = st.form_submit_button("Analyser avec Gemini", disabled=not gemini_ready)
+        if analyze:
+            if not sports_question.strip():
+                st.warning("Ajoute le match ou les cotes à analyser.")
+            else:
+                try:
+                    result = _post_json(
+                        base_url,
+                        "/api/v1/advisory/gemini",
+                        {"message": sports_question, "domain": "sports"},
+                    )
+                except RuntimeError as exc:
+                    st.error(f"Gemini n’a pas pu répondre : {exc}")
+                else:
+                    st.markdown(result.get("text", "Réponse Gemini vide."))
+                    sources = result.get("sources", [])
+                    if sources:
+                        st.markdown("**Sources consultées par Gemini**")
+                        for source in sources:
+                            st.markdown(f"- [{source['title']}]({source['url']})")
+                    st.caption("Analyse d’information uniquement; aucun pari n’est transmis aux bookmakers.")
 
     for tab, title, category, keywords in (
         (overview_tabs[1], "Microservices", "microservices", ("microservice", "micro-task", "gig", "service")),
