@@ -23,7 +23,7 @@ def _get_json(base_url: str, path: str) -> Dict[str, Any]:
     return data
 
 
-def _post_json(base_url: str, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _post_json(base_url: str, path: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
     request = Request(
         f"{base_url.rstrip('/')}{path}",
         data=json.dumps(payload).encode("utf-8"),
@@ -31,7 +31,7 @@ def _post_json(base_url: str, path: str, payload: Dict[str, Any]) -> Dict[str, A
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Browser operation unavailable: {exc}") from exc
@@ -133,6 +133,153 @@ def _render_managed_connections(base_url: str, integrations: Dict[str, Any]) -> 
                         st.link_button("Autoriser chez le fournisseur", result["authorization_url"])
             if not provider.get("configured"):
                 left.caption("Configuration OAuth incomplète côté serveur.")
+
+
+def _inject_nexus_theme() -> None:
+    st.markdown("""
+    <style>
+      :root { --navy:#071B2E; --navy2:#0C2941; --black:#050B14; --green:#36D399;
+              --orange:#FF9F43; --white:#F3F7FA; --red:#FF5D68; --muted:#A9BAC8; }
+      .stApp { background: radial-gradient(ellipse at 12% 0%, #103653 0, #071B2E 42%, #050B14 100%); color:var(--white); }
+      [data-testid="stHeader"] { background:rgba(5,11,20,.75); }
+      [data-testid="stSidebar"] { background:linear-gradient(180deg,#061522,#091D2D); border-right:1px solid #21435a; }
+      [data-testid="stMetric"] { background:linear-gradient(145deg,rgba(15,46,69,.96),rgba(6,20,33,.96));
+          border:1px solid #25465b; border-radius:16px; padding:16px 18px; box-shadow:0 12px 30px #0003; }
+      [data-testid="stMetricLabel"] p { color:#b6c8d5 !important; }
+      [data-testid="stMetricValue"] { color:#36D399 !important; }
+      .nexus-hero { padding:24px 28px; margin:2px 0 22px; border:1px solid #24506a;
+          border-radius:20px; background:linear-gradient(110deg,#0c2941,#071b2e 68%,#12364b);
+          box-shadow:0 18px 40px #0004; }
+      .nexus-kicker { color:#36D399; letter-spacing:.16em; font-size:.76rem; font-weight:800; text-transform:uppercase; }
+      .nexus-hero h1 { color:#F3F7FA; margin:.35rem 0; font-size:2rem; }
+      .nexus-hero p { color:#B7C8D5; margin:0; }
+      .nexus-node { min-height:126px; padding:16px; margin-bottom:12px; border-radius:15px;
+          border:1px solid #25465b; background:linear-gradient(150deg,#0d2a41,#071522); }
+      .nexus-node b { color:#F3F7FA; font-size:1rem; }
+      .nexus-node small { color:#A9BAC8; display:block; margin-top:7px; line-height:1.5; }
+      .nexus-pill { display:inline-block; margin-top:10px; padding:4px 9px; border-radius:99px;
+          color:#36D399; background:#36D39918; border:1px solid #36D39955; font-size:.72rem; font-weight:700; }
+      .nexus-pill.warn { color:#FF9F43; background:#FF9F4318; border-color:#FF9F4355; }
+      .nexus-pill.off { color:#FF5D68; background:#FF5D6818; border-color:#FF5D6855; }
+      div[data-testid="stTabs"] button { color:#DDE7EF; }
+      div[data-testid="stTabs"] button[aria-selected="true"] { color:#36D399; border-color:#36D399; }
+      div[data-testid="stExpander"] { border-color:#25465b; border-radius:14px; }
+      .nexus-note { padding:12px 15px; border-left:3px solid #FF9F43; background:#FF9F4312;
+          color:#D7E2EA; border-radius:4px 12px 12px 4px; }
+      h1,h2,h3,h4 { color:#F3F7FA; }
+      [data-testid="stCaptionContainer"] { color:#A9BAC8; }
+      button[kind="primary"] { background:#36D399; border-color:#36D399; color:#061522; font-weight:700; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _render_ghost_console(base_url: str, overview: Dict[str, Any]) -> None:
+    st.subheader("Ghost · poste de métamorphose")
+    st.caption("Le graphe, le journal et les contrôles affichent leurs sources et leurs modes. Les essais ci-dessous n’envoient aucun ordre.")
+    stages = [
+        ("Kernel", "Coordination et contrôles", "CODE PRÉSENT", "ok"),
+        ("Perception", "Cotations et flux MT5", "FLUX REQUIS", "off"),
+        ("Reconstruction", "Contexte marché", "DONNÉES REQUISES", "warn"),
+        ("Cartographie", "Graphe d’actifs et spreads", "MODÈLE DISPONIBLE", "ok"),
+        ("Analyse", "Stress et propagation", "SCÉNARIO DISPONIBLE", "ok"),
+        ("Mémoire", "Journal opérationnel", "PERSISTANCE RENDER À CONFIGURER", "warn"),
+        ("Prédiction", "Spread attendu / hypothèse", "CODE PARTIEL", "warn"),
+        ("Décision", "Proposition contrôlée", "PROPOSITION SEULEMENT", "warn"),
+        ("Exécution", "Ordres MT5", "AUCUN ORDRE ENVOYÉ", "off"),
+    ]
+    for start in range(0, len(stages), 3):
+        cols = st.columns(3)
+        for col, (name, desc, status, kind) in zip(cols, stages[start:start + 3]):
+            col.markdown(
+                f'<div class="nexus-node"><b>{name}</b><small>{desc}</small>'
+                f'<span class="nexus-pill {"warn" if kind == "warn" else "off" if kind == "off" else ""}">{status}</span></div>',
+                unsafe_allow_html=True,
+            )
+    stage_names = [stage[0] for stage in stages]
+    selected_stage = st.select_slider("Prévisualiser la transformation", options=stage_names, value="Cartographie")
+    stage_index = stage_names.index(selected_stage)
+    st.progress((stage_index + 1) / len(stage_names), text=f"Aperçu de l’organe {stage_index + 1}/9 · {selected_stage}")
+    st.caption("Cette progression est une prévisualisation de l’interface no-code; seul le scénario de marché ci-dessous exécute le calcul Ghost.")
+
+    left, right = st.columns([1.15, 1])
+    with left:
+        st.markdown("#### MT5 · test de connexion en lecture seule")
+        st.caption("Vérifie le terminal et lit quelques cotations configurées. L’essai ne crée ni ne modifie aucune position.")
+        if st.button("Tester le terminal MT5", key="ghost_mt5_preflight", type="primary"):
+            try:
+                st.session_state["ghost_mt5_result"] = _get_json(base_url, "/api/v1/ghost/mt5/preflight")
+            except RuntimeError as exc:
+                st.session_state["ghost_mt5_result"] = {"status": "API_UNAVAILABLE", "detail": str(exc), "orders_submitted": 0}
+        mt5_result = st.session_state.get("ghost_mt5_result")
+        if mt5_result:
+            status = mt5_result.get("status", "UNKNOWN")
+            if status == "CONNECTED":
+                st.success(f"Terminal joignable · {len(mt5_result.get('quotes', []))} cotation(s) lue(s) · 0 ordre envoyé")
+                st.dataframe(mt5_result.get("quotes", []), use_container_width=True, hide_index=True)
+            else:
+                st.error(f"MT5 : {status}")
+                st.caption(mt5_result.get("detail") or "Aucune cotation confirmée. Aucun ordre n’a été envoyé.")
+        else:
+            st.info("Pas encore testé. Render héberge Nexus sur Linux; un terminal MT5 local nécessite un pont Windows configuré pour fournir des données réelles.")
+
+    with right:
+        st.markdown("#### Aperçu Ghost · scénario contrôlé")
+        st.caption("Entre un bid/ask observé ou un scénario. Les valeurs saisies ne sont pas des cotations live.")
+        with st.form("ghost_scenario_form"):
+            symbol = st.selectbox("Instrument", ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "WTIUSD"))
+            bid_text = st.text_input("Bid", placeholder="Valeur observée")
+            ask_text = st.text_input("Ask", placeholder="Valeur observée")
+            terminal_latency = st.number_input("Latence terminal observée (ms)", min_value=0.0, value=0.0, step=0.1)
+            usd_speed = st.number_input("Vitesse USD (unité du modèle)", value=0.0, step=0.1)
+            submitted = st.form_submit_button("Calculer la prévisualisation", type="primary")
+        if submitted:
+            try:
+                bid = float(bid_text.strip())
+                ask = float(ask_text.strip())
+                result = _post_json(base_url, "/api/v1/ghost/preview", {
+                    "symbol": symbol, "bid": bid, "ask": ask,
+                    "terminal_latency_ms": terminal_latency, "usd_speed": usd_speed,
+                })
+            except (ValueError, RuntimeError) as exc:
+                st.error(f"Prévisualisation non calculée : {exc}")
+            else:
+                st.session_state["ghost_scenario_result"] = result
+
+    result = st.session_state.get("ghost_scenario_result")
+    if result:
+        st.markdown("#### Résultat de la prévisualisation")
+        st.caption(f"Source : {result['source']} · mode {result['mode']} · aucun ordre envoyé · calcul Ghost {result['ghost_compute_latency_ms']} ms")
+        spread = result["spread_model"]
+        cols = st.columns(5)
+        cols[0].metric("Spread calculé", result["spread"])
+        cols[1].metric("Spread attendu du modèle", spread["e_expected_spread"])
+        cols[2].metric("Stress du spread", spread["z_spread_stress"])
+        cols[3].metric("État du carnet (proxy)", spread["orderbook_status"])
+        cols[4].metric("Latence MT5 saisie", f"{result['input_terminal_latency_ms']} ms" if result.get("input_terminal_latency_ms") else "Non fournie")
+        st.bar_chart({
+            "Spread saisi": [spread["s_current"]],
+            "Référence du modèle": [spread["e_expected_spread"]],
+        }, height=180)
+        if result.get("propagation_hypotheses"):
+            st.dataframe(result["propagation_hypotheses"], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Aucune hypothèse de propagation déclenchée par les valeurs de ce scénario.")
+        st.markdown('<div class="nexus-note">Le graphe de liquidité actuel utilise le bid/ask et un proxy de stress; il ne lit pas la profondeur réelle du carnet. Le spread attendu est une référence codée, pas une prévision apprise.</div>', unsafe_allow_html=True)
+
+    st.markdown("#### Journal des tâches Ghost")
+    ghost_tasks = [
+        task for task in overview.get("tasks", [])
+        if "ghost" in f"{task.get('agent', '')} {task.get('task_type', '')}".casefold()
+    ]
+    if ghost_tasks:
+        st.dataframe([
+            {"Tâche": item.get("task_id"), "Type": item.get("task_type"),
+             "Agent": item.get("agent"), "État": item.get("status"),
+             "Mode": item.get("execution_mode"), "Mis à jour": item.get("updated_at")}
+            for item in ghost_tasks
+        ], use_container_width=True, hide_index=True)
+    else:
+        st.info("Le journal ne contient pas encore de tâche Ghost. Les étapes ci-dessus décrivent le code détecté, pas un cycle d’exécution déjà réalisé.")
 
 
 def _render_payouts(base_url: str) -> None:
@@ -385,11 +532,14 @@ def render_dashboard() -> None:
         page_icon="N",
         layout="wide",
     )
-    st.title("Nexus · Operational Command Center")
-    st.caption(
-        "Vue en lecture seule alimentée exclusivement par OperationalJournal. "
-        "EXECUTED et VERIFIED restent des états distincts."
-    )
+    _inject_nexus_theme()
+    st.markdown("""
+    <div class="nexus-hero">
+      <div class="nexus-kicker">NEXUS · AUTONOMOUS OPERATIONS</div>
+      <h1>Centre de pilotage</h1>
+      <p>Microservices · E-commerce · Trading · Paris sportifs · Ghost</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     default_url = os.getenv("NEXUS_API_BASE_URL", "http://127.0.0.1:8000")
     with st.sidebar:
@@ -410,21 +560,15 @@ def render_dashboard() -> None:
     active_session = runtime.get("active_session")
     latest_session = runtime.get("latest_session")
     last_activity = runtime.get("last_activity")
-    summary_columns = st.columns(3)
-    summary_columns[0].write(
-        "**Session active**\n\n" +
-        (active_session["session_id"] if active_session else "Aucune")
-    )
-    summary_columns[1].write(
-        "**État du runtime**\n\n" +
-        (active_session["status"] if active_session else (
+    summary_columns = st.columns(4)
+    summary_columns[0].metric("Session active", "Oui" if active_session else "Non")
+    summary_columns[1].metric(
+        "Runtime", active_session["status"] if active_session else (
             latest_session["status"] if latest_session else "Non enregistré"
-        ))
+        )
     )
-    summary_columns[2].write(
-        "**Dernière activité**\n\n" +
-        (str(last_activity["occurred_at"]) if last_activity else "Aucune")
-    )
+    summary_columns[2].metric("Tâches journalisées", len(overview.get("tasks", [])))
+    summary_columns[3].metric("Dernière activité", str(last_activity["occurred_at"])[:19] if last_activity else "Aucune")
 
     try:
         storage = _get_json(base_url, "/api/v1/storage")
@@ -434,16 +578,15 @@ def render_dashboard() -> None:
         st.success(f"Mémoire SQLite sur disque persistant : {storage['database_path']}")
     else:
         st.warning(
-            "Mémoire SQLite active, mais éphémère sur Render. Pour la conserver après "
-            "redémarrage/déploiement, attachez un disque persistant payant monté sur "
-            "/var/data et définissez NEXUS_OPERATIONAL_DB_PATH=/var/data/nexus_operational.db."
+            "Mémoire SQLite active mais éphémère sur Render : le journal peut être perdu au redémarrage. "
+            "Le disque durable n’est pas encore configuré."
         )
 
     overview_tabs = st.tabs(
         [
             "Vue globale", "Mission", "Tâche", "Timeline", "Exécution / preuves", "Recovery",
-            "Microservices", "E-commerce", "Trading", "Paris sportifs", "Chat central",
-            "Connexions", "Revenus & paiements",
+            "Microservices", "E-commerce", "Trading", "Paris sportifs", "Ghost · Laboratoire",
+            "Agents IA", "Connexions", "Revenus & paiements",
         ]
      )
     missions = overview.get("missions", [])
@@ -580,11 +723,6 @@ def render_dashboard() -> None:
         except RuntimeError as exc:
             catalog = []
             st.warning(f"Inventaire des plateformes indisponible : {exc}")
-        st.write("**Cibles web configurées**")
-        if catalog:
-            st.dataframe(catalog, use_container_width=True, hide_index=True)
-        else:
-            st.caption("Aucune plateforme déclarée pour cette catégorie.")
         matching = [
             task for task in tasks
             if any(
@@ -592,6 +730,26 @@ def render_dashboard() -> None:
                 for keyword in keywords
             )
         ]
+        connected = sum(1 for item in catalog if str(item.get("status", "")).upper() in {"CONNECTED", "ACTIVE", "READY"})
+        running = sum(1 for item in matching if item.get("status") in {"RUNNING", "IN_PROGRESS"})
+        verified = sum(1 for item in matching if item.get("status") == "VERIFIED")
+        metrics = st.columns(4)
+        metrics[0].metric("Plateformes au catalogue", len(catalog))
+        metrics[1].metric("Connexions vérifiées", connected)
+        metrics[2].metric("Tâches en cours", running)
+        metrics[3].metric("Tâches vérifiées", verified)
+        st.write("**Plateformes de ce département**")
+        if catalog:
+            st.dataframe(
+                [
+                    {"Plateforme": item.get("name"), "État": item.get("status"),
+                     "Mode de connexion": item.get("connection_mode"), "Source": item.get("source")}
+                    for item in catalog
+                ], use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption("Aucune plateforme déclarée pour cette catégorie.")
+        st.markdown("**Activité réelle du journal**")
         if matching:
             st.dataframe(
                 [
@@ -609,10 +767,7 @@ def render_dashboard() -> None:
             )
         else:
             st.caption("Aucune tâche réellement enregistrée dans cette catégorie.")
-        st.info(
-            "Le catalogue Nexus indique les plateformes demandées et leur état de connexion. "
-            "La navigation générique reste en lecture seule et exige un hôte autorisé."
-        )
+        st.caption("Les compteurs viennent du journal opérationnel; les plateformes sans connexion confirmée restent signalées comme telles.")
 
     for tab, title, category, keywords in (
         (overview_tabs[6], "Microservices", "microservices", ("microservice", "micro-task", "gig", "service")),
@@ -624,8 +779,23 @@ def render_dashboard() -> None:
             render_category(title, category, keywords)
 
     with overview_tabs[10]:
-        st.subheader("Chat de coordination")
-        st.caption("Les réponses des fournisseurs sont des recommandations. Elles ne constituent ni preuve ni autorisation financière et ne déclenchent aucune action externe.")
+        _render_ghost_console(base_url, overview)
+
+    with overview_tabs[11]:
+        st.subheader("Chat IA · Codex / Claude / Gemini")
+        st.caption("Chaque réponse est produite par l’API officielle du fournisseur configuré. Les modèles ne sont pas l’agent Codex de cette conversation.")
+        try:
+            provider_status = _get_json(base_url, "/api/v1/integrations/status").get("ai_providers", [])
+        except RuntimeError:
+            provider_status = []
+        if provider_status:
+            status_columns = st.columns(3)
+            for col, item in zip(status_columns, provider_status):
+                state = "CLÉ PRÉSENTE · NON TESTÉE" if item.get("connector_available") else "CLÉ API ABSENTE"
+                col.metric(item.get("label", item.get("provider_id")), state, item.get("model"))
+        else:
+            st.warning("État des fournisseurs indisponible.")
+        st.caption("Les clés manquantes doivent être ajoutées aux secrets Render; elles ne sont pas reprises de Codex, Claude ou Gemini ouverts dans d’autres applications.")
         selected_agent = st.selectbox("Agent", ("gpt", "gemini", "claude"), key="nexus_advisory_agent")
         selected_domain = st.selectbox("Domaine", ("general", "microservices", "ecommerce", "trading", "sports", "ghost"), key="nexus_advisory_domain")
         advisory_message = st.text_area("Objectif ou question", key="nexus_advisory_message")
@@ -643,7 +813,7 @@ def render_dashboard() -> None:
         if st.session_state.get("nexus_advisory_response"):
             st.json(st.session_state["nexus_advisory_response"])
 
-    with overview_tabs[11]:
+    with overview_tabs[12]:
         st.subheader("Diagnostic des connexions")
         try:
             integrations = _get_json(base_url, "/api/v1/integrations/status")
@@ -686,7 +856,7 @@ def render_dashboard() -> None:
                         base_url, "/api/v1/browser/navigate", {
                             "url": requested_url,
                             "browser": selected_browser,
-                        }
+                        }, timeout=210,
                     )
                 except RuntimeError as exc:
                     st.error(str(exc))
@@ -724,5 +894,5 @@ def render_dashboard() -> None:
                 st.info("Le catalogue fixe ne contient aucune plateforme pour cette catégorie.")
             st.caption("Un statut de catalogue ne prouve pas qu’un compte est connecté. Consulte la section Connexions de comptes ci-dessus pour l’état OAuth réel.")
 
-    with overview_tabs[12]:
+    with overview_tabs[13]:
         _render_payouts(base_url)

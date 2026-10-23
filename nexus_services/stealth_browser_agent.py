@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
@@ -93,6 +96,30 @@ class BrowserAgent:
         if async_playwright is None:
             self.execution_mode = "UNAVAILABLE"
             raise RuntimeError("Playwright is not installed; browser navigation is unavailable")
+
+        # Render's native Python build installs the Playwright package but does not
+        # download browser binaries. The user explicitly enables browser access;
+        # fetch the selected official binary lazily on first use instead of claiming
+        # that package installation alone made browsing ready.
+        manager = async_playwright()
+        probe = await manager.start()
+        executable = Path(getattr(probe, self.browser_name).executable_path)
+        await probe.stop()
+        if not executable.is_file():
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "playwright", "install", self.browser_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                output, _ = await asyncio.wait_for(process.communicate(), timeout=180)
+            except asyncio.TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise RuntimeError("Playwright browser download timed out") from exc
+            if process.returncode != 0 or not executable.is_file():
+                detail = output.decode("utf-8", errors="replace")[-1200:]
+                raise RuntimeError(f"Playwright browser setup failed: {detail}")
 
         self.playwright = await self._journaled_operation(
             "launch_driver", "playwright", {"headless": self.headless},
