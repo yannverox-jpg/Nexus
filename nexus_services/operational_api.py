@@ -186,7 +186,10 @@ def get_integration_status():
     domains = [host.strip() for host in allowed_hosts.split(",") if host.strip()]
     return {
         "agent_roles": get_role_assignments(),
-        "ai_providers": get_provider_status(),
+        "ai_providers": [
+            provider for provider in get_provider_status()
+            if provider.get("provider_id") != "gemini"
+        ],
         "browser": {
             "playwright_package_available": async_playwright is not None,
             "allowed_hosts_configured": bool(domains),
@@ -227,6 +230,11 @@ def disconnect_provider(provider_id: str):
 @app.post("/api/v1/advisory/{agent_name}")
 def advisory_chat(agent_name: str, request: AdvisoryChatRequest):
     """Ask a configured provider for advice; never dispatches an external action."""
+    if agent_name.casefold() == "gemini":
+        raise HTTPException(
+            status_code=410,
+            detail="Gemini is used online from Nexus; no Gemini API connector is exposed.",
+        )
     provider_id = {"gpt": "codex_gpt", "codex": "codex_gpt", "gemini": "gemini", "claude": "claude"}.get(agent_name.casefold())
     if provider_id is None:
         raise HTTPException(status_code=400, detail="Agent non reconnu")

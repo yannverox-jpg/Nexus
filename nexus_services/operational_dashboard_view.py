@@ -600,45 +600,29 @@ def render_dashboard() -> None:
             st.caption("Aucune plateforme sportive n’est déclarée dans le catalogue.")
 
         st.divider()
-        st.subheader("Gemini en ligne · analyse sportive")
-        try:
-            providers = integration_status.get("ai_providers", [])
-            gemini = next((item for item in providers if item.get("provider_id") == "gemini"), {})
-        except (TypeError, AttributeError):
-            gemini = {}
-        gemini_ready = bool(gemini.get("connector_available"))
-        if gemini_ready:
-            st.success(f"Clé Gemini configurée · {gemini.get('model', 'modèle par défaut')} · recherche Google activée pour ce domaine.")
-        else:
-            st.warning("Gemini n’est pas configuré côté serveur. Ajoute NEXUS_GEMINI_API_KEY dans les variables Render pour activer l’analyse en ligne.")
-
-        with st.form("nexus_sports_gemini_form"):
-            sports_question = st.text_area(
-                "Match, cotes et éléments à vérifier",
-                placeholder="Indique la rencontre, les cotes observées et les informations dont tu disposes…",
-                key="nexus_sports_gemini_question",
-            )
-            analyze = st.form_submit_button("Analyser avec Gemini", disabled=not gemini_ready)
-        if analyze:
+        st.subheader("Gemini en ligne · contexte Nexus")
+        st.caption("Prépare le contexte dans Nexus, puis ouvre Gemini avec ton compte Google. Gemini répond dans son interface en ligne; Nexus ne transmet rien à une API Gemini.")
+        sports_question = st.text_area(
+            "Rencontre, cotes et éléments à examiner",
+            placeholder="Ex. équipe A – équipe B, compétition, date, cotes observées, statistiques ou question…",
+            key="nexus_sports_gemini_question",
+        )
+        if st.button("Préparer le contexte pour Gemini", key="nexus_prepare_gemini_context"):
             if not sports_question.strip():
-                st.warning("Ajoute le match ou les cotes à analyser.")
+                st.warning("Ajoute une rencontre ou une question pour préparer le contexte.")
             else:
-                try:
-                    result = _post_json(
-                        base_url,
-                        "/api/v1/advisory/gemini",
-                        {"message": sports_question, "domain": "sports"},
-                    )
-                except RuntimeError as exc:
-                    st.error(f"Gemini n’a pas pu répondre : {exc}")
-                else:
-                    st.markdown(result.get("text", "Réponse Gemini vide."))
-                    sources = result.get("sources", [])
-                    if sources:
-                        st.markdown("**Sources consultées par Gemini**")
-                        for source in sources:
-                            st.markdown(f"- [{source['title']}]({source['url']})")
-                    st.caption("Analyse d’information uniquement; aucun pari n’est transmis aux bookmakers.")
+                st.session_state["nexus_gemini_sports_context"] = (
+                    "Tu es mon assistant d’analyse sportive dans Nexus. Analyse les informations ci-dessous. "
+                    "Vérifie les éléments récents avec des sources en ligne, indique les dates et les liens, "
+                    "distingue faits vérifiés et incertitudes, et signale les données manquantes. "
+                    "Ne prétends pas garantir un résultat.\n\n"
+                    f"Contexte fourni par Nexus :\n{sports_question.strip()}"
+                )
+        sports_context = st.session_state.get("nexus_gemini_sports_context", "")
+        if sports_context:
+            st.text_area("Contexte à copier dans Gemini", value=sports_context, height=180, key="nexus_gemini_context_preview")
+        st.link_button("Ouvrir Gemini en ligne", "https://gemini.google.com/app", use_container_width=True)
+        st.caption("Dans Gemini, colle le contexte préparé ci-dessus. Sur Android, l’onglet Gemini en ligne de l’application Nexus propose aussi le partage direct vers l’application Gemini installée.")
 
     for tab, title, category, keywords in (
         (overview_tabs[1], "Microservices", "microservices", ("microservice", "micro-task", "gig", "service")),
@@ -658,9 +642,9 @@ def render_dashboard() -> None:
         _render_ghost_console(overview)
 
     with overview_tabs[6]:
-        st.subheader("Chat IA · Codex / Claude / Gemini")
+        st.subheader("Chat IA · Codex / Claude")
         st.caption("Espace de travail des agents Nexus.")
-        selected_agent = st.selectbox("Agent", ("gpt", "gemini", "claude"), key="nexus_advisory_agent")
+        selected_agent = st.selectbox("Agent", ("gpt", "claude"), key="nexus_advisory_agent")
         selected_domain = st.selectbox("Domaine", ("general", "microservices", "ecommerce", "trading", "sports", "ghost"), key="nexus_advisory_domain")
         advisory_message = st.text_area("Objectif ou question", key="nexus_advisory_message")
         if st.button("Demander une recommandation", key="nexus_advisory_submit"):

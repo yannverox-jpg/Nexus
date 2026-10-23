@@ -4,10 +4,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,11 +44,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.material3.OutlinedTextField
 
 private val Navy = Color(0xFF07172B)
 private val Panel = Color(0xFF10253C)
@@ -128,7 +120,7 @@ private fun NexusSportsApp() {
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     icon = { Text("✦", color = if (selectedTab == 1) Orange else Muted) },
-                    label = { Text("Nexus IA") },
+                    label = { Text("Gemini en ligne") },
                 )
             }
         },
@@ -228,66 +220,51 @@ private fun openSportsApp(context: android.content.Context, app: SportsApp) {
 
 @Composable
 private fun NexusAiConsole(modifier: Modifier = Modifier) {
-    var webView by remember { mutableStateOf<WebView?>(null) }
-    var canGoBack by remember { mutableStateOf(false) }
-    BackHandler(enabled = canGoBack) { webView?.goBack() }
-
-    Column(modifier.fillMaxSize()) {
-        Text(
-            "Console IA Nexus · GPT / Claude / Gemini",
-            color = SoftWhite,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-        )
-        AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { context ->
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.loadsImagesAutomatically = true
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            val host = request.url.host.orEmpty()
-                            if (host == "nexus-deu3.onrender.com") return false
-                            return try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
-                                true
-                            } catch (_: ActivityNotFoundException) {
-                                true
-                            }
-                        }
-
-                        override fun onPageFinished(view: WebView, url: String?) {
-                            canGoBack = view.canGoBack()
-                        }
-                    }
-                    loadUrl(BuildConfig.NEXUS_DASHBOARD_URL)
-                    webView = this
-                }
-            },
-            update = { view ->
-                webView = view
-                canGoBack = view.canGoBack()
-            },
-        )
+    val context = LocalContext.current
+    var sportsContext by remember { mutableStateOf("") }
+    val prompt = remember(sportsContext) {
+        "Tu es mon assistant d’analyse sportive dans Nexus. Analyse les informations ci-dessous. " +
+            "Vérifie les éléments récents avec des sources en ligne, indique les dates et les liens, " +
+            "distingue les faits vérifiés des incertitudes et signale les données manquantes. " +
+            "Ne prétends pas garantir un résultat.\n\nContexte fourni par Nexus :\n${sportsContext.trim()}"
     }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, webView) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> webView?.onResume()
-                Lifecycle.Event.ON_PAUSE -> webView?.onPause()
-                else -> Unit
-            }
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("Gemini en ligne · Paris sportifs", color = SoftWhite, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Ajoute le match et les éléments à examiner. Nexus prépare le prompt et le partage avec l’application Gemini; aucune API Gemini n’est utilisée.", color = Muted)
+        OutlinedTextField(
+            value = sportsContext,
+            onValueChange = { sportsContext = it },
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            label = { Text("Rencontre, cotes et question") },
+            placeholder = { Text("Équipes, compétition, date, cotes observées, statistiques…") },
+            minLines = 5,
+        )
+        Button(
+            onClick = {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, prompt)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Continuer avec Gemini"))
+            },
+            enabled = sportsContext.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Navy),
+        ) {
+            Text("Partager le contexte avec Gemini", fontWeight = FontWeight.Bold)
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            webView?.stopLoading()
-            webView?.destroy()
-            webView = null
+        Button(
+            onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://gemini.google.com/app")))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Navy),
+        ) {
+            Text("Ouvrir Gemini en ligne", fontWeight = FontWeight.Bold)
         }
     }
 }
