@@ -14,7 +14,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
-from .sqlite_storage import connect_sqlite
+try:
+    from .sqlite_storage import connect_sqlite
+except ImportError:  # legacy direct-module imports
+    from sqlite_storage import connect_sqlite
 
 
 class TaskStatus(str, Enum):
