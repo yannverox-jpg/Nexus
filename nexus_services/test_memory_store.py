@@ -19,6 +19,10 @@ class ConversationMemoryTests(unittest.TestCase):
                 "conversation-1", "assistant", "I found one configuration issue.",
                 "codex_gpt", "test-model",
             )
+            first.add_message(
+                "conversation-1", "user", "Card 4111 1111 1111 1111 CVV=123",
+                "codex_gpt", "test-model",
+            )
 
             reopened = ConversationMemory(path)
             messages = reopened.recent_messages("conversation-1")
@@ -27,6 +31,9 @@ class ConversationMemoryTests(unittest.TestCase):
             self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz012345", messages[0]["content"])
             self.assertNotIn("Bearer abcdefghijklmnop", messages[0]["content"])
             self.assertEqual(messages[1]["content"], "I found one configuration issue.")
+            self.assertNotIn("4111 1111 1111 1111", messages[2]["content"])
+            self.assertNotIn("CVV=123", messages[2]["content"])
+            self.assertIn("[REDACTED]", messages[2]["content"])
 
     def test_long_term_facts_survive_reopen_and_reject_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
