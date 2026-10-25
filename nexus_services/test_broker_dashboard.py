@@ -1,51 +1,41 @@
 import unittest
-import os
-import tempfile
 from fastapi.testclient import TestClient
 
-temp_fd, temp_db_path = tempfile.mkstemp(suffix=".db")
+from nexus_services import nexus_api_server
 
-from task_persistence_db import NexusDatabaseManager
-import nexus_api_server
 
-nexus_api_server.db = NexusDatabaseManager(db_path=temp_db_path)
-
-class TestBrokerDashboard(unittest.TestCase):
-
+class TestRuntimeDashboard(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(nexus_api_server.app)
 
-    def test_health_check(self):
-        res = self.client.get("/health")
-        self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.json()["status"], "online")
-        self.assertEqual(res.json()["department"], "NFX_GHOST_v2.5_SENTINEL")
+    def test_health_check_does_not_expose_broker_account_state(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "online")
+        self.assertNotIn("broker_connected", payload)
+        self.assertNotIn("login", payload)
+        self.assertNotIn("balance", payload)
 
-    def test_broker_account_endpoint(self):
-        res = self.client.get("/api/v1/broker/account")
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertIn("balance", data)
-        self.assertIn("equity", data)
-        self.assertIn("margin", data)
+    def test_broker_routes_are_removed(self):
+        route_paths = {
+            getattr(route, "path", "")
+            for route in nexus_api_server.app.routes
+        }
+        self.assertNotIn("/api/v1/broker/account", route_paths)
+        self.assertNotIn("/api/v1/broker/positions", route_paths)
+        self.assertNotIn("/api/v1/broker/history", route_paths)
+        self.assertNotIn("/api/v1/broker/withdraw", route_paths)
 
-    def test_broker_positions_endpoint(self):
-        res = self.client.get("/api/v1/broker/positions")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("positions", res.json())
+    def test_dashboard_is_read_only_and_does_not_call_broker_endpoints(self):
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Nexus Runtime Status", response.text)
+        self.assertNotIn("/api/v1/broker/account", response.text)
+        self.assertNotIn("/api/v1/broker/positions", response.text)
+        self.assertNotIn("/api/v1/broker/withdraw", response.text)
+        self.assertNotIn("MetaTrader5", response.text)
 
-    def test_broker_withdraw_endpoint(self):
-        payload = {"to_address": "0xPlatformVaultAddress", "amount_usd": 150.0}
-        res = self.client.post("/api/v1/broker/withdraw", json=payload)
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data["status"], "REQUESTED")
-        self.assertEqual(data["amount_usd"], 150.0)
-
-    def test_dashboard_static_serving(self):
-        res = self.client.get("/dashboard/")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("NEXUS PILOT DASHBOARD", res.text)
 
 if __name__ == "__main__":
     unittest.main()
