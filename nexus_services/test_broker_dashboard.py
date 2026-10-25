@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from nexus_services import nexus_api_server
@@ -6,7 +8,13 @@ from nexus_services import nexus_api_server
 
 class TestRuntimeDashboard(unittest.TestCase):
     def setUp(self):
+        self.env_patch = patch.dict(os.environ, {"NEXUS_API_BEARER_TOKEN": "test-token"})
+        self.env_patch.start()
         self.client = TestClient(nexus_api_server.app)
+        self.client.headers.update({"Authorization": "Bearer test-token"})
+
+    def tearDown(self):
+        self.env_patch.stop()
 
     def test_health_check_does_not_expose_broker_account_state(self):
         response = self.client.get("/health")
