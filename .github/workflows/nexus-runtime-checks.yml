@@ -26,4 +26,4 @@ jobs:
           nexus_services.test_browser_safety
           nexus_services.test_runtime_contracts
           nexus_services.test_operational_journal
-          nexus_services.test_operational_dashboard\n          nexus_services.test_multi_agent_orchestrator
+          nexus_services.test_operational_dashboard\n          nexus_services.test_multi_agent_orchestrator\n          nexus_services.test_legacy_runtime_adapter
