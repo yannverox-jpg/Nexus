@@ -1,13 +1,14 @@
-cat << 'EOF' > render.yaml
 services:
   - type: web
     name: nexus-os
-    env: python
+    runtime: python
     region: frankfurt
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run dashboard.py --server.port=$PORT --server.address=0.0.0.0
+    startCommand: streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.0
-EOF
+        value: "3.11.9"
+      - key: NEXUS_OPERATIONAL_DB_PATH
+        value: /var/data/nexus_operational.db
