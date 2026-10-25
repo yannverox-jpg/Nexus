@@ -30,8 +30,7 @@
         const data = await response.json();
         if (!response.ok || data.status !== 'online') throw new Error('API indisponible');
         status.textContent = 'API en ligne';
-        details.textContent = 'Runtime : ' + data.department + ' · Version : ' + data.version +
-          ' · RPC Web3 : ' + (data.connected ? 'connecté' : 'non connecté');
+        details.textContent = 'Runtime : ' + data.department + ' · Version : ' + data.version;
       } catch (_) {
         status.textContent = 'API indisponible';
         details.textContent = 'Impossible de confirmer la disponibilité du runtime.';
