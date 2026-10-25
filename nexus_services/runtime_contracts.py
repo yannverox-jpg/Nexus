@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+from .sqlite_storage import connect_sqlite
+
 
 class TaskStatus(str, Enum):
     PLANNED = "PLANNED"
@@ -339,17 +341,18 @@ class TaskPersistenceAdapter(TaskRepository):
 
 
 class SQLiteTaskRepository(TaskRepository):
-    def __init__(self, db_path: str = "nexus_tasks_state.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "nexus_tasks_state.db", timeout: float = 30.0):
+        self.timeout = timeout
+        self._keeper = None
+        if db_path == ":memory:":
+            self.db_path = f"file:nexus_tasks_{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._keeper = connect_sqlite(self.db_path, timeout=timeout)
+        else:
+            self.db_path = db_path
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        db_path = self.db_path
-        if db_path == ":memory:":
-            db_path = "file::memory:?cache=shared"
-        conn = sqlite3.connect(db_path, uri=db_path.startswith("file:"))
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_sqlite(self.db_path, timeout=self.timeout)
 
     def _init_db(self) -> None:
         with self._connect() as conn:
