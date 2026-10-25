@@ -3,6 +3,11 @@ import json
 import time
 from typing import Dict, Any, List, Optional
 
+try:
+    from .sqlite_storage import connect_sqlite
+except ImportError:  # legacy direct-module imports from nexus_api_server
+    from sqlite_storage import connect_sqlite
+
 class NexusDatabaseManager:
     """
     Gestionnaire de persistance locale GHOST DB :
@@ -14,7 +19,7 @@ class NexusDatabaseManager:
         self._init_db()
 
     def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+        return connect_sqlite(self.db_path)
 
     def _init_db(self):
         with self._get_connection() as conn:
