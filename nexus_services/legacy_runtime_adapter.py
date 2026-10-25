@@ -67,31 +67,6 @@ class NexusOrchestrator:
         self.runtime.stop()
 
 
-class NexusWeb3WalletManager:
-    """Deprecated compatibility shim; Nexus does not own or generate wallets.
-
-    Legacy escrow code may still import this name, but no keys, addresses, or
-    balances are created or managed here. External platform accounts and the
-    user's prepaid Visa remain outside Nexus custody.
-    """
-
-    def __init__(self, evm_rpc_url: str = ""):
-        self.evm_rpc_url = ""
-
-    def generate_encrypted_keypair(self) -> Dict[str, str]:
-        raise RuntimeError(
-            "Nexus does not own a wallet. Register external platform accounts instead."
-        )
-
-    async def transfer_stablecoin(
-        self, encrypted_private_key: str, to_address: str,
-        token_contract_address: str, amount: float,
-    ) -> Dict[str, Any]:
-        raise PermissionError(
-            "Nexus does not custody funds or execute wallet transfers; use the external platform payout flow."
-        )
-
-
 class NexusMicroserviceBridge:
     """Explicitly unavailable bridge instead of a no-op pretending to call services."""
 
