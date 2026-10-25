@@ -9,9 +9,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .agent_roles import get_role_assignments
-from .ai_connectors import get_connector_status
-from .code_change_manager import code_change_status
+try:
+    from .agent_roles import get_role_assignments
+    from .ai_connectors import get_connector_status
+    from .code_change_manager import code_change_status
+except ImportError:
+    from agent_roles import get_role_assignments
+    from ai_connectors import get_connector_status
+    from code_change_manager import code_change_status
 
 
 NEXUS_IDENTITY: dict[str, Any] = {
