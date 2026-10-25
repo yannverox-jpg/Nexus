@@ -29,6 +29,15 @@ class BrowserNavigationRequest(BaseModel):
     browser: str = "chromium"
 
 
+class BrowserFormField(BaseModel):
+    selector: str
+    value: str
+
+
+class BrowserFormFillRequest(BaseModel):
+    fields: list[BrowserFormField]
+
+
 class AdvisoryChatRequest(BaseModel):
     message: str
     system: str = ""
@@ -186,10 +195,7 @@ def get_integration_status():
     domains = [host.strip() for host in allowed_hosts.split(",") if host.strip()]
     return {
         "agent_roles": get_role_assignments(),
-        "ai_providers": [
-            provider for provider in get_provider_status()
-            if provider.get("provider_id") != "gemini"
-        ],
+        "ai_providers": get_provider_status(),
         "browser": {
             "playwright_package_available": async_playwright is not None,
             "allowed_hosts_configured": bool(domains),
@@ -230,11 +236,6 @@ def disconnect_provider(provider_id: str):
 @app.post("/api/v1/advisory/{agent_name}")
 def advisory_chat(agent_name: str, request: AdvisoryChatRequest):
     """Ask a configured provider for advice; never dispatches an external action."""
-    if agent_name.casefold() == "gemini":
-        raise HTTPException(
-            status_code=410,
-            detail="Gemini is used online from Nexus; no Gemini API connector is exposed.",
-        )
     provider_id = {"gpt": "codex_gpt", "codex": "codex_gpt", "gemini": "gemini", "claude": "claude"}.get(agent_name.casefold())
     if provider_id is None:
         raise HTTPException(status_code=400, detail="Agent non reconnu")
@@ -297,6 +298,32 @@ async def navigate_browser(request: BrowserNavigationRequest):
         "content_persisted": False,
         "actions_enabled": False,
     }
+
+
+@app.post("/api/v1/browser/fill")
+async def fill_browser_form(request: BrowserFormFillRequest):
+    """Fill only non-sensitive fields on the already-open allowlisted page.
+    This endpoint never submits forms or handles passwords, payments, CAPTCHAs,
+    or anti-bot challenges; those remain manual human steps.
+    """
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    if not request.fields or len(request.fields) > 20:
+        raise HTTPException(status_code=400, detail="Provide between 1 and 20 fields")
+    try:
+        results = []
+        for field in request.fields:
+            if not field.selector.strip() or len(field.selector) > 300 or len(field.value) > 2000:
+                raise ValueError("Invalid selector or field value length")
+            results.append(await _browser_agent.fill_non_sensitive_field(field.selector, field.value))
+        return {"status": "FIELDS_FILLED", "fields": results, "form_submitted": False,
+                "sensitive_steps": "manual_human_required"}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Form fill failed: {type(exc).__name__}") from exc
 
 
 @app.on_event("shutdown")
