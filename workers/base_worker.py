@@ -30,7 +30,16 @@ class BaseWorker(abc.ABC):
             result = await self.process(task["payload"])
             logger.log("INFO", f"Worker [{self.worker_id}] a terminé la tâche {task_id} avec succès.", correlation_id=cid)
             self.db.log_audit(cid, "INFO", f"Worker [{self.worker_id}] completed task {task_id}")
-            return {"status": "SUCCESS", "result": result}
+            # These legacy workers are deterministic placeholders, not real-world
+            # executors. Keep that distinction in every result so the journal and
+            # dashboard cannot present simulated work as a real successful action.
+            simulated_result = dict(result) if isinstance(result, dict) else {"value": result}
+            simulated_result["execution_mode"] = "SIMULATED"
+            return {
+                "status": "SIMULATED",
+                "execution_mode": "SIMULATED",
+                "result": simulated_result,
+            }
         except Exception as e:
             tb_str = traceback.format_exc()
             logger.log("ERROR", f"Worker [{self.worker_id}] échec sur tâche {task_id}: {str(e)}", correlation_id=cid, extra={"trace": tb_str})
