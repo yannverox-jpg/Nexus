@@ -26,7 +26,7 @@ class ConversationMemoryTests(unittest.TestCase):
 
             reopened = ConversationMemory(path)
             messages = reopened.recent_messages("conversation-1")
-            self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+            self.assertEqual([item["role"] for item in messages], ["user", "assistant", "user"])
             self.assertIn("[REDACTED]", messages[0]["content"])
             self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz012345", messages[0]["content"])
             self.assertNotIn("Bearer abcdefghijklmnop", messages[0]["content"])
