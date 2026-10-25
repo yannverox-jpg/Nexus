@@ -171,5 +171,66 @@ class BrowserFieldSafetyTests(unittest.IsolatedAsyncioTestCase):
                 BrowserAgent()
 
 
+class HttpProbeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_probe_returns_read_only_static_html(self):
+        class Response:
+            status_code = 200
+            headers = {"content-type": "text/html; charset=utf-8"}
+            text = "<html><head><title>Public page</title></head><body><h1>Hello Nexus</h1></body></html>"
+            url = "https://example.test/"
+        class Client:
+            def __init__(self, **_kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_args): return False
+            async def get(self, _url): return Response()
+
+        agent = BrowserAgent(allowed_domains=["example.test"])
+        with patch("nexus_services.stealth_browser_agent.httpx.AsyncClient", Client):
+            result = await agent.probe_http("https://example.test/")
+        self.assertEqual(result["status"], "OBSERVED")
+        self.assertEqual(result["execution_mode"], "HTTP_READ_ONLY")
+        self.assertEqual(result["title"], "Public page")
+        self.assertIn("Hello Nexus", result["text_excerpt"])
+        self.assertFalse(result["actions_enabled"])
+        self.assertIsNone(agent.page)
+
+    async def test_http_probe_stops_on_access_challenge(self):
+        class Response:
+            status_code = 403
+            headers = {"content-type": "text/html"}
+            text = "<html><body>Verify you are human</body></html>"
+            url = "https://example.test/"
+        class Client:
+            def __init__(self, **_kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_args): return False
+            async def get(self, _url): return Response()
+
+        agent = BrowserAgent(allowed_domains=["example.test"])
+        with patch("nexus_services.stealth_browser_agent.httpx.AsyncClient", Client):
+            result = await agent.probe_http("https://example.test/")
+        self.assertEqual(result["status"], "HUMAN_INTERVENTION_REQUIRED")
+        self.assertTrue(result["challenge"]["detected"])
+        self.assertTrue(agent.challenge_detected)
+        self.assertIsNone(agent.page)
+
+    async def test_http_probe_falls_back_for_javascript_app_shell(self):
+        class Response:
+            status_code = 200
+            headers = {"content-type": "text/html"}
+            text = '<html><head><title>App</title></head><body><div id="root"></div><script src="a.js"></script><script src="b.js"></script><script src="c.js"></script></body></html>'
+            url = "https://example.test/"
+        class Client:
+            def __init__(self, **_kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_args): return False
+            async def get(self, _url): return Response()
+
+        agent = BrowserAgent(allowed_domains=["example.test"])
+        with patch("nexus_services.stealth_browser_agent.httpx.AsyncClient", Client):
+            result = await agent.probe_http("https://example.test/")
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
