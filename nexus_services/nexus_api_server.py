@@ -207,8 +207,6 @@ def code_change_status_endpoint():
 async def navigate_browser(req: BrowserNavigationRequest):
     """Navigate an allowlisted page and stop on CAPTCHA or anti-bot challenges."""
     global _browser_agent
-    if async_playwright is None:
-        raise HTTPException(status_code=503, detail="Playwright is unavailable")
     parsed = urlparse(req.url)
     if (req.browser not in {"chromium", "firefox"}
             or parsed.scheme not in {"http", "https"} or not parsed.hostname
@@ -231,6 +229,13 @@ async def navigate_browser(req: BrowserNavigationRequest):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
+        # Prefer a bounded, read-only HTTP request for ordinary static HTML.
+        # If the response needs JavaScript or HTTP is unavailable, use Playwright.
+        http_result = await _browser_agent.probe_http(req.url)
+        if http_result is not None:
+            return http_result
+        if async_playwright is None:
+            raise HTTPException(status_code=503, detail="HTTP fast path unavailable and Playwright is not installed")
         if _browser_agent.page is None:
             await _browser_agent.initialize()
         await _browser_agent.navigate(req.url)
