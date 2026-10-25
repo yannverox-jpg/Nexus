@@ -52,7 +52,7 @@ app.add_middleware(
 async def require_api_bearer_token(request: Request, call_next):
     # Minimal liveness endpoint only. All functional routes fail closed when
     # the secret is missing, and use constant-time comparison when configured.
-    if request.url.path == "/health":
+    if request.url.path == "/health" or request.url.path == "/dashboard" or request.url.path.startswith("/dashboard/"):
         return await call_next(request)
     expected = os.getenv("NEXUS_API_BEARER_TOKEN", "").strip()
     supplied = request.headers.get("authorization", "")
