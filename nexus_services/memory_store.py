@@ -28,7 +28,7 @@ class ConversationMemory:
         re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
         re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
         re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key)\s*[:=]\s*[^\s,;]+"),
-        re.compile(r"(?i)\\b(cvv|cvc|security code)\\s*[:=]\\s*\\d{3,4}\\b"),
+        re.compile(r"(?i)\b(cvv|cvc|security code)\s*[:=]\s*\d{3,4}\b"),
         re.compile(r"(?<!\\d)(?:\\d[ -]?){12,18}\\d(?!\\d)"),
     )
 
