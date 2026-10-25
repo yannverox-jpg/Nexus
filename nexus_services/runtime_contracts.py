@@ -536,24 +536,7 @@ class OperationalJournal(TaskRepository, EventRepository):
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        if self._memory_uri:
-            conn = sqlite3.connect(
-                self._memory_uri,
-                uri=True,
-                timeout=self.timeout,
-                check_same_thread=False,
-            )
-        else:
-            conn = sqlite3.connect(
-                self.db_path, timeout=self.timeout, check_same_thread=False
-            )
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self._memory_uri:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = FULL")
-        return conn
+        return connect_sqlite(self._memory_uri or self.db_path, timeout=self.timeout)
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
