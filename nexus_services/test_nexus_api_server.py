@@ -36,6 +36,7 @@ class TestNexusAPIServer(unittest.TestCase):
             "/api/v1/ghost/chat/{agent_name}", "/api/v1/memory/facts",
             "/api/v1/memory/conversations/{conversation_id}",
             "/api/v1/code-change/status", "/api/v1/code-change/proposals",
+            "/api/v1/browser/navigate", "/api/v1/browser/fill",
         ):
             self.assertIn(path, paths)
 
