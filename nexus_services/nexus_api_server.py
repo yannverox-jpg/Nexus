@@ -9,15 +9,12 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from web3 import Web3
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
-from web3_escrow_billing import NexusWeb3EscrowBilling
 from task_persistence_db import NexusDatabaseManager
-from dispute_resolution import NexusDisputeResolutionEngine
 from nexus_autonomous_boot import NexusAutonomousBootDaemon
 from ghost_meta_kernel import (
     CognitivePipeline,
@@ -74,33 +71,9 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/dashboard", StaticFiles(directory=static_dir, html=True), name="static")
 
-# Configuration Web3 (Polygon Mainnet)
-RPC_URL = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
-PRIVATE_KEY = os.getenv("NEXUS_PRIVATE_KEY", "")  # Clé privée du wallet Nexus
-USDC_CONTRACT_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"  # Native USDC Polygon
-
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
-
-ERC20_ABI = [
-    {
-        "constant": False,
-        "inputs": [{"name": "_to", "type": "address"}, {"name": "_value", "type": "uint256"}],
-        "name": "transfer",
-        "outputs": [{"name": "", "type": "bool"}],
-        "type": "function"
-    },
-    {
-        "constant": True,
-        "inputs": [{"name": "_owner", "type": "address"}],
-        "name": "balanceOf",
-        "outputs": [{"name": "balance", "type": "uint256"}],
-        "type": "function"
-    }
-]
-
-# Instances globales des modules & GHOST Kernel
+# Nexus tracks external platform accounts; it does not own or custody a wallet.
 db = NexusDatabaseManager()
-from legacy_runtime_adapter import NexusOrchestrator, NexusWeb3WalletManager
+from legacy_runtime_adapter import NexusOrchestrator
 
 orchestrator = NexusOrchestrator(max_agents=10)
 catalog = ServiceCatalogRegistry()
@@ -114,9 +87,6 @@ ghost_topological_graph = TopologicalCointegrationGraph()
 ghost_mcp_orchestrator = MCPTryptychOrchestrator(ghost_topological_graph)
 ghost_readiness_manager = CognitiveReadinessManager()
 
-wallet_mgr: Optional[NexusWeb3WalletManager] = None
-escrow: Optional[NexusWeb3EscrowBilling] = None
-dispute_engine: Optional[NexusDisputeResolutionEngine] = None
 boot_daemon: Optional[NexusAutonomousBootDaemon] = None
 
 # Modèles Pydantic
@@ -131,10 +101,6 @@ class RegisterServiceRequest(BaseModel):
     cost_usdc: float
     method: str = "POST"
 
-class WithdrawRequest(BaseModel):
-    to_address: str
-    amount_usdc: float
-
 class HITLApprovalRequest(BaseModel):
     hitl_id: str
 
@@ -143,19 +109,7 @@ class AgentChatRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    global wallet_mgr, escrow, dispute_engine, boot_daemon
-
-    try:
-        config_path = os.path.join(os.path.dirname(__file__), "config_nexus.json")
-        with open(config_path, "r") as f:
-            config = json.load(f)
-        rpc_url = config.get("web3_wallet", {}).get("evm_rpc_url", RPC_URL)
-    except Exception:
-        rpc_url = RPC_URL
-
-    wallet_mgr = NexusWeb3WalletManager(evm_rpc_url=rpc_url)
-    escrow = NexusWeb3EscrowBilling(wallet_mgr)
-    dispute_engine = NexusDisputeResolutionEngine(escrow_system=escrow, db_manager=db)
+    global boot_daemon
 
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
     orchestrator.spawn_agent("Worker-Beta", "TRADING_EXECUTION")
@@ -177,8 +131,7 @@ def health_check():
 
 # --- ENDPOINTS MÉMOIRE PERSISTANTE (GHOST DB) & READINESS ---
 
-@app.get("/api/v1/memory/short")
-def get_short_term_memory():
+@app.get("/api/v1/memory/short")def get_short_term_memory():
     """Récupère les événements récents (Hot Cache / Short Term Memory)."""
     return {"market_events": db.get_recent_market_events(limit=20)}
 
@@ -245,15 +198,7 @@ def approve_hitl_action(req: HITLApprovalRequest):
         raise HTTPException(status_code=404, detail="Action HITL introuvable ou déjà traitée.")
     return {"status": "APPROVED", "hitl_id": req.hitl_id}
 
-# Broker/MT5 account integration intentionally removed.\n\n@app.post("/api/v1/treasury/withdraw")
-async def withdraw_usdc(request: WithdrawRequest):
-    # Disabled until a separate treasury service has scoped authorization,
-    # transaction limits, replay protection, human approval, and audit proof.
-    # Merely setting a private key must never activate money movement.
-    raise HTTPException(
-        status_code=410,
-        detail="Treasury withdrawals are disabled pending a separately secured approval workflow.",
-    )
+# Broker/MT5 account integration intentionally removed.
 
 @app.post("/api/v1/goals/submit")
 async def submit_autonomous_goal(req: SubmitGoalRequest):
@@ -298,17 +243,6 @@ def list_services():
 def register_service(req: RegisterServiceRequest):
     catalog.register_service(req.name, req.endpoint, req.cost_usdc, req.method)
     return {"status": "REGISTERED", "service_name": req.name}
-
-@app.post("/api/v1/wallet/generate")
-def generate_wallet_key():
-    if not wallet_mgr:
-        raise HTTPException(status_code=500, detail="Wallet manager non initialisé.")
-    keypair = wallet_mgr.generate_encrypted_keypair()
-    return {
-        "status": "CREATED",
-        "address": keypair["address"],
-        "encrypted_private_key": keypair["encrypted_private_key"]
-    }
 
 @app.websocket("/ws/monitoring")
 async def websocket_monitoring(websocket: WebSocket):
