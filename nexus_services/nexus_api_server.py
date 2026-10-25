@@ -29,6 +29,7 @@ from ghost_meta_kernel import (
     HumanInTheLoopGateway,
     DynamicCapabilityRegistry
 )
+from multi_agent_orchestrator import coordinate_advisors
 from ghost_institutional_predictive_engine import (
     TopologicalCointegrationGraph,
     MCPTryptychOrchestrator,
@@ -187,19 +188,41 @@ def get_readiness_status():
 
 @app.post("/api/v1/ghost/chat/{agent_name}")
 async def chat_with_agent(agent_name: str, req: AgentChatRequest):
-    """Canal d'interaction directe pour converser avec Gemini, GPT ou Claude."""
-    agent_upper = agent_name.upper()
-    if agent_upper == "GEMINI":
-        intel = ghost_llm_tryptych.gemini_web_recon(req.message)
-        return {"agent": "Gemini", "response": f"Radar Macro: {intel['intel']}", "data": intel}
-    elif agent_upper == "GPT":
-        structured = ghost_llm_tryptych.gpt_structurer(req.message)
-        return {"agent": "GPT", "response": f"Translation Topologique: {structured['structured_json']}", "data": structured}
-    elif agent_upper == "CLAUDE":
-        dec = ghost_llm_tryptych.claude_self_code_and_decide()
-        return {"agent": "Claude", "response": f"Synthèse Souveraine: {dec['strategy']}", "data": dec}
-    else:
-        raise HTTPException(status_code=400, detail="Agent non reconnu. Choisir parmi Gemini, GPT, Claude.")
+    """Appelle le fournisseur configuré ; aucune réponse simulée n'est renvoyée."""
+    provider_aliases = {"GPT": "codex_gpt", "GEMINI": "gemini", "CLAUDE": "claude"}
+    provider_id = provider_aliases.get(agent_name.upper())
+    if provider_id is None:
+        raise HTTPException(status_code=400, detail="Agent non reconnu. Choisir parmi GPT, Gemini, Claude.")
+    connector = __import__("ai_connectors", fromlist=["CONNECTORS"]).CONNECTORS[provider_id]
+    try:
+        result = await asyncio.to_thread(
+            connector.complete,
+            req.message,
+            system="Nexus advisory only. Do not claim to execute external actions.",
+            google_search=(provider_id == "gemini"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={
+            "status": "PROVIDER_UNAVAILABLE",
+            "provider": provider_id,
+            "error_type": type(exc).__name__,
+        }) from exc
+    return {"agent": provider_id, "response": result["text"], "data": result}
+
+
+@app.post("/api/v1/ghost/orchestrate")
+async def orchestrate_ai_advisors(req: AgentChatRequest):
+    """Demande une revue parallèle aux trois fournisseurs et persiste le résultat."""
+    readiness = ghost_readiness_manager.calculate_readiness_maturity()
+    result = await coordinate_advisors(
+        req.message,
+        domain="ghost",
+        db_manager=db,
+        readiness_pct=float(readiness.get("m_global_pct", 0.0)),
+    )
+    if result["status"] == "FAILED":
+        raise HTTPException(status_code=503, detail=result)
+    return result
 
 # --- ENDPOINTS GHOST & MODULES DYNAMIQUES ---
 
