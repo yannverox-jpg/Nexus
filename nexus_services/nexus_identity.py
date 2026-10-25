@@ -106,9 +106,20 @@ def get_capability_status() -> dict[str, Any]:
         },
         "execution": {
             "can_plan_tasks": True,
+            "safe_internal_executors": [
+                "CAPABILITY_ASSESSMENT",
+                "WORKFLOW_PLAN_REVIEW",
+                "PLATFORM_ACCOUNT_RECONCILIATION",
+            ],
             "can_execute_registered_integrations_only": True,
             "unsupported_tasks_fail_closed": True,
+            "external_platform_execution_configured": False,
             "financial_transfers_enabled": False,
-            "ready_status": "PARTIAL" if len(configured) < 3 or not browser_package else "CONFIGURED_WITH_GUARDS",
+            "ready_status": "READY_FOR_INTERNAL_PLANNING",
+            "external_integration_status": (
+                "PARTIAL" if len(configured) < 3 or not browser_package
+                or not os.getenv("NEXUS_BROWSER_ALLOWED_HOSTS", "").strip()
+                else "CONFIGURED_WITH_GUARDS"
+            ),
         },
     }
