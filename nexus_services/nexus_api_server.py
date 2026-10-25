@@ -15,13 +15,16 @@ sys.path.insert(0, os.path.dirname(__file__))
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
 from task_persistence_db import NexusDatabaseManager
-from nexus_autonomous_boot import NexusAutonomousBootDaemon
 from ghost_meta_kernel import (
     CognitivePipeline,
     HumanInTheLoopGateway,
     DynamicCapabilityRegistry
 )
 from multi_agent_orchestrator import coordinate_advisors
+from ai_connectors import CONNECTORS
+from agent_roles import build_agent_system_context, get_provider_status
+from memory_store import ConversationMemory, configured_database_path
+from nexus_identity import get_identity, get_capability_status
 from ghost_institutional_predictive_engine import (
     TopologicalCointegrationGraph,
     MCPTryptychOrchestrator,
@@ -87,7 +90,7 @@ ghost_topological_graph = TopologicalCointegrationGraph()
 ghost_mcp_orchestrator = MCPTryptychOrchestrator(ghost_topological_graph)
 ghost_readiness_manager = CognitiveReadinessManager()
 
-boot_daemon: Optional[NexusAutonomousBootDaemon] = None
+conversation_memory = ConversationMemory(configured_database_path())
 
 # Modèles Pydantic
 class SubmitGoalRequest(BaseModel):
@@ -106,19 +109,16 @@ class HITLApprovalRequest(BaseModel):
 
 class AgentChatRequest(BaseModel):
     message: str
+    conversation_id: Optional[str] = None
+    domain: str = "general"
+    system: str = ""
 
 @app.on_event("startup")
 async def startup_event():
-    global boot_daemon
-
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
-    orchestrator.spawn_agent("Worker-Beta", "TRADING_EXECUTION")
+    orchestrator.spawn_agent("Worker-Beta", "AUTHORIZED_WORKFLOW_PLANNING")
     asyncio.create_task(orchestrator.start_dispatcher())
-
-    boot_daemon = NexusAutonomousBootDaemon(auto_engine, db)
-    asyncio.create_task(boot_daemon.start_m2m_continuous_loop())
-
-    print("👑 [NFX-GHOST v2.5] Serveur Backend initialisé et prêt sur Nexus.")
+    print("[NEXUS] Canonical runtime started; task execution remains integration-gated.")
 
 @app.get("/health")
 def health_check():
@@ -128,6 +128,32 @@ def health_check():
         "department": "NEXUS_CANONICAL_RUNTIME",
         "version": "3.5"
     }
+
+# --- Identity, capability report and persistent chat memory ---
+
+@app.get("/api/v1/identity")
+def identity_status():
+    return get_identity()
+
+
+@app.get("/api/v1/capabilities")
+def capability_status():
+    return get_capability_status()
+
+
+@app.get("/api/v1/providers")
+def provider_status():
+    return {"providers": get_provider_status()}
+
+
+@app.get("/api/v1/memory/conversations/{conversation_id}")
+def get_conversation_memory(conversation_id: str, limit: int = 40):
+    return {
+        "conversation_id": conversation_id,
+        "messages": conversation_memory.recent_messages(conversation_id, limit=limit),
+        "storage": "configured_operational_database",
+    }
+
 
 # --- ENDPOINTS MÉMOIRE PERSISTANTE (GHOST DB) & READINESS ---
 
@@ -150,18 +176,40 @@ def get_readiness_status():
 
 @app.post("/api/v1/ghost/chat/{agent_name}")
 async def chat_with_agent(agent_name: str, req: AgentChatRequest):
-    """Appelle un fournisseur réel configuré ; aucune réponse simulée n'est renvoyée."""
-    provider_aliases = {"GPT": "codex_gpt", "GEMINI": "gemini", "CLAUDE": "claude"}
-    provider_id = provider_aliases.get(agent_name.upper())
+    """Chat with an explicitly configured provider and persist redacted history."""
+    aliases = {"GPT": "codex_gpt", "CODEX": "codex_gpt", "GEMINI": "gemini", "CLAUDE": "claude"}
+    provider_id = aliases.get(agent_name.upper())
     if provider_id is None:
-        raise HTTPException(status_code=400, detail="Agent non reconnu. Choisir parmi GPT, Gemini, Claude.")
-    connector = __import__("ai_connectors", fromlist=["CONNECTORS"]).CONNECTORS[provider_id]
+        raise HTTPException(status_code=400, detail="Choisir GPT, Gemini ou Claude.")
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Le message ne peut pas être vide.")
+    try:
+        system_context = build_agent_system_context(provider_id, req.domain, req.system)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    connector = CONNECTORS[provider_id]
+    if not connector.status()["connector_available"]:
+        raise HTTPException(status_code=503, detail={
+            "status": "PROVIDER_NOT_CONFIGURED",
+            "provider": provider_id,
+            "required_environment_variable": connector.api_key_env,
+        })
+
+    conversation_id = req.conversation_id or secrets.token_hex(16)
+    prior = conversation_memory.recent_messages(conversation_id, limit=12)
+    model = os.getenv(connector.model_env, connector.default_model)
+    conversation_memory.add_message(conversation_id, "user", req.message, provider_id, model)
+    history = "\\n".join(f"{item['role']}: {item['content']}" for item in prior[-10:])
+    prompt = (
+        f"Prior conversation (context only):\\n{history}\\n\\nCurrent user message:\\n{req.message}"
+        if history else req.message
+    )
     try:
         result = await asyncio.to_thread(
             connector.complete,
-            req.message,
-            system="Nexus advisory only. Do not claim to execute external actions.",
-            google_search=(provider_id == "gemini"),
+            prompt,
+            system=system_context,
+            google_search=provider_id == "gemini",
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail={
@@ -169,7 +217,16 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
             "provider": provider_id,
             "error_type": type(exc).__name__,
         }) from exc
-    return {"agent": provider_id, "response": result["text"], "data": result}
+    conversation_memory.add_message(
+        conversation_id, "assistant", result["text"], provider_id, result["model"]
+    )
+    return {
+        **result,
+        "agent": provider_id,
+        "conversation_id": conversation_id,
+        "memory_persisted": True,
+        "action_execution": "NOT_PERFORMED",
+    }
 
 
 @app.post("/api/v1/ghost/orchestrate")
