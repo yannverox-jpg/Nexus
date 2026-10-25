@@ -28,6 +28,25 @@ class ConversationMemoryTests(unittest.TestCase):
             self.assertNotIn("Bearer abcdefghijklmnop", messages[0]["content"])
             self.assertEqual(messages[1]["content"], "I found one configuration issue.")
 
+    def test_long_term_facts_survive_reopen_and_reject_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "memory.db")
+            first = ConversationMemory(path)
+            first.set_fact(
+                "wallet_model",
+                "Nexus ne possède pas de portefeuille; les soldes restent sur les plateformes.",
+                category="constraint",
+            )
+            reopened = ConversationMemory(path)
+            facts = reopened.list_facts(category="constraint")
+            self.assertEqual(len(facts), 1)
+            self.assertEqual(facts[0]["fact_key"], "wallet_model")
+            self.assertIn("ne possède pas", facts[0]["content"])
+            with self.assertRaises(ValueError):
+                reopened.set_fact("bad_secret", "sk-abcdefghijklmnopqrstuvwxyz012345")
+            self.assertTrue(reopened.delete_fact("wallet_model"))
+            self.assertEqual(reopened.list_facts(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
