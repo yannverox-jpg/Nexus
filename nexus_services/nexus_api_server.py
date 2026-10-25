@@ -344,6 +344,12 @@ def generate_wallet_key():
 
 @app.websocket("/ws/monitoring")
 async def websocket_monitoring(websocket: WebSocket):
+    expected = os.getenv("NEXUS_API_BEARER_TOKEN", "").strip()
+    supplied = websocket.headers.get("authorization", "")
+    token = supplied[7:].strip() if supplied.lower().startswith("bearer ") else ""
+    if not expected or not token or not secrets.compare_digest(token, expected):
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
     await websocket.accept()
     try:
         while True:
