@@ -34,6 +34,20 @@
     <div id="metrics" class="grid"></div>
     <h3>Règles et fonctions</h3><ul id="rules"></ul>
     <h3>Fournisseurs IA et rôles</h3><div id="providers" class="grid"></div>
+    <h3>Mémoire durable des contraintes</h3>
+    <p class="muted">Les faits enregistrés seront réinjectés dans les prochains échanges. Ne stocke aucun mot de passe, jeton ou donnée de carte.</p>
+    <div id="facts" class="grid"></div>
+    <div class="row"><div><label for="fact-key">Clé de mémoire</label><input id="fact-key" placeholder="ex. preference_nexus_wallet"></div><div><label for="fact-category">Catégorie</label><select id="fact-category"><option>project</option><option>constraint</option><option>preference</option><option>workflow</option></select></div></div>
+    <label for="fact-content">Fait ou contrainte à retenir</label><textarea id="fact-content" rows="2" placeholder="Ex. Nexus ne possède aucun portefeuille; les soldes sont ceux des plateformes."></textarea>
+    <button id="save-fact">Enregistrer en mémoire</button><p id="fact-status" class="tiny"></p>
+  </section>
+  <section class="panel">
+    <h2>Adaptation du code</h2>
+    <p class="muted">Nexus peut préparer une modification dans une branche GitHub et ouvrir une pull request brouillon. La production n'est jamais modifiée directement; CI et revue humaine restent obligatoires.</p>
+    <div class="row"><div><label for="code-path">Chemin du fichier</label><input id="code-path" placeholder="nexus_services/module.py"></div><div><label for="code-title">Titre du changement</label><input id="code-title" placeholder="Améliorer la mémoire du runtime"></div></div>
+    <label for="code-summary">Résumé et contraintes</label><textarea id="code-summary" rows="2" placeholder="Ce qui change, pourquoi et quels tests valider."></textarea>
+    <label for="code-content">Contenu complet du fichier proposé</label><textarea id="code-content" rows="8" placeholder="Colle ici le contenu revu du fichier. Limite 100 Ko."></textarea>
+    <button id="propose-code">Créer une pull request brouillon</button><p id="code-status" class="tiny"></p>
   </section>
   <section class="panel">
     <div class="topline"><div><h2>Chat avec le cerveau Nexus</h2><p class="muted">Discussion persistante, avec GPT, Gemini ou Claude via leurs API officielles configurées.</p></div><button id="new-chat" style="max-width:190px;align-self:start">Nouvelle conversation</button></div>
@@ -103,6 +117,23 @@
     $("health").textContent="Authentifié";
     $("connection-message").textContent="Identité, rôles et état de configuration chargés depuis le runtime.";
     await loadMemory();
+    await loadFacts();
+    const code = await api("/api/v1/code-change/status");
+    $("code-status").textContent = code.configured
+      ? "GitHub prêt · les propositions créent une branche et une PR brouillon."
+      : "GitHub non configuré : ajouter NEXUS_GITHUB_REPOSITORY et NEXUS_GITHUB_TOKEN côté serveur pour activer les PR.";
+  }
+  async function loadFacts() {
+    const data = await api("/api/v1/memory/facts");
+    $("facts").replaceChildren();
+    for (const fact of data.facts || []) {
+      const card=document.createElement("div");card.className="metric";
+      const h=document.createElement("strong");h.textContent=fact.fact_key+" · "+fact.category;
+      const p=document.createElement("p");p.textContent=fact.content;
+      const b=document.createElement("button");b.textContent="Archiver";
+      b.addEventListener("click",async()=>{try{await api("/api/v1/memory/facts/"+encodeURIComponent(fact.fact_key),{method:"DELETE"});await loadFacts();}catch(err){$("fact-status").textContent=err.message;}});
+      card.append(h,p,b);$("facts").append(card);
+    }
   }
   async function loadMemory() {
     $("messages").replaceChildren();
@@ -115,6 +146,27 @@
     currentToken=$("token").value.trim();
     sessionStorage.setItem("nexus_api_token",currentToken);
     try { await loadIdentity(); } catch(err) { $("health").textContent="Accès refusé";$("connection-message").textContent=err.message; }
+  });
+  $("save-fact").addEventListener("click", async () => {
+    try {
+      await api("/api/v1/memory/facts",{method:"POST",body:JSON.stringify({
+        fact_key:$("fact-key").value.trim(),content:$("fact-content").value.trim(),category:$("fact-category").value
+      })});
+      $("fact-status").textContent="Fait enregistré; il sera inclus dans le contexte des prochains échanges.";
+      $("fact-key").value="";$("fact-content").value="";
+      await loadFacts();
+    } catch(err) {$("fact-status").textContent=err.message;}
+  });
+  $("propose-code").addEventListener("click", async () => {
+    $("propose-code").disabled=true;$("code-status").textContent="Création de la branche et de la pull request…";
+    try {
+      const result=await api("/api/v1/code-change/proposals",{method:"POST",body:JSON.stringify({
+        path:$("code-path").value.trim(),title:$("code-title").value.trim(),
+        summary:$("code-summary").value.trim(),content:$("code-content").value
+      })});
+      $("code-status").textContent="PR brouillon créée : "+result.pull_request_url+" · branche "+result.branch;
+    } catch(err) {$("code-status").textContent=err.message;}
+    finally {$("propose-code").disabled=false;}
   });
   $("send").addEventListener("click", async () => {
     const message=$("message").value.trim();
