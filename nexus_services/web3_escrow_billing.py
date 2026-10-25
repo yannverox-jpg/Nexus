@@ -1,9 +1,9 @@
 import time
 from typing import Dict, Any
 try:
-    from module2_web3_wallet import NexusWeb3WalletManager
+    from .legacy_runtime_adapter import NexusWeb3WalletManager
 except ImportError:
-    from module_mocks import NexusWeb3WalletManager
+    from legacy_runtime_adapter import NexusWeb3WalletManager
 
 class NexusWeb3EscrowBilling:
     """
