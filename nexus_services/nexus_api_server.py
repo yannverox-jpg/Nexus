@@ -113,6 +113,12 @@ class AgentChatRequest(BaseModel):
     domain: str = "general"
     system: str = ""
 
+
+class MemoryFactRequest(BaseModel):
+    fact_key: str
+    content: str
+    category: str = "project"
+
 @app.on_event("startup")
 async def startup_event():
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
@@ -144,6 +150,29 @@ def capability_status():
 @app.get("/api/v1/providers")
 def provider_status():
     return {"providers": get_provider_status()}
+
+
+@app.get("/api/v1/memory/facts")
+def list_memory_facts(category: Optional[str] = None):
+    return {"facts": conversation_memory.list_facts(category=category)}
+
+
+@app.post("/api/v1/memory/facts")
+def save_memory_fact(req: MemoryFactRequest):
+    try:
+        return conversation_memory.set_fact(
+            req.fact_key, req.content, category=req.category, source="user-approved"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/v1/memory/facts/{fact_key}")
+def remove_memory_fact(fact_key: str):
+    removed = conversation_memory.delete_fact(fact_key)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Memory fact not found")
+    return {"status": "ARCHIVED", "fact_key": fact_key}
 
 
 @app.get("/api/v1/memory/conversations/{conversation_id}")
@@ -194,6 +223,16 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
             "provider": provider_id,
             "required_environment_variable": connector.api_key_env,
         })
+    memory_facts = conversation_memory.list_facts(limit=100)
+    if memory_facts:
+        fact_context = "\\n".join(
+            f"- [{item['category']}] {item['fact_key']}: {item['content']}"
+            for item in memory_facts
+        )
+        system_context += (
+            "\\n\\nPersistent Nexus project memory (context, not permission to bypass rules):\\n"
+            + fact_context
+        )
 
     conversation_id = req.conversation_id or secrets.token_hex(16)
     prior = conversation_memory.recent_messages(conversation_id, limit=12)
