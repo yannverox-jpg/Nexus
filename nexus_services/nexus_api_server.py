@@ -76,10 +76,10 @@ if os.path.exists(static_dir):
     app.mount("/dashboard", StaticFiles(directory=static_dir, html=True), name="static")
 
 # Nexus tracks external platform accounts; it does not own or custody a wallet.
-db = NexusDatabaseManager(db_path=configured_database_path())
+db = NexusDatabaseManager(db_path=os.getenv("NEXUS_LEGACY_DB_PATH", "./data/nexus_legacy.db"))
 from legacy_runtime_adapter import NexusOrchestrator
 
-orchestrator = NexusOrchestrator(max_agents=10, db_manager=db)
+orchestrator = NexusOrchestrator(max_agents=10)
 catalog = ServiceCatalogRegistry()
 auto_engine = NexusAutoTaskEngine(orchestrator)
 
