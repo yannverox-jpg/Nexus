@@ -98,8 +98,13 @@ def get_capability_status() -> dict[str, Any]:
         "browser": {
             "playwright_package_available": browser_package,
             "allowed_hosts_configured": bool(os.getenv("NEXUS_BROWSER_ALLOWED_HOSTS", "").strip()),
+            "proxy_configured": bool(os.getenv("NEXUS_BROWSER_PROXY", "").strip()),
+            "geolocation_emulation_enabled": os.getenv("NEXUS_BROWSER_ALLOW_GEOLOCATION", "").strip().casefold() in {"1", "true", "yes"},
+            "locale_configured": bool(os.getenv("NEXUS_BROWSER_LOCALE", "fr-FR").strip()),
+            "timezone_configured": bool(os.getenv("NEXUS_BROWSER_TIMEZONE", "Europe/Amsterdam").strip()),
+            "captcha_handling": "DETECT_AND_PAUSE_FOR_HUMAN",
             "actions_enabled": False,
-            "note": "Navigation is limited to configured hosts; sensitive login, payments, CAPTCHA and form submission remain human-controlled.",
+            "note": "Navigation is limited to configured hosts; proxy routing is explicit; geolocation is opt-in; CAPTCHA and anti-bot challenges pause automation and are never bypassed.",
         },
         "code_adaptation": {
             "mode": code_mode,
