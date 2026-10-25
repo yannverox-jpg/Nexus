@@ -252,12 +252,12 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
         })
     memory_facts = conversation_memory.list_facts(limit=100)
     if memory_facts:
-        fact_context = "\\n".join(
+        fact_context = "\n".join(
             f"- [{item['category']}] {item['fact_key']}: {item['content']}"
             for item in memory_facts
         )
         system_context += (
-            "\\n\\nPersistent Nexus project memory (context, not permission to bypass rules):\\n"
+            "\n\nPersistent Nexus project memory (context, not permission to bypass rules):\n"
             + fact_context
         )
 
@@ -265,9 +265,9 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
     prior = conversation_memory.recent_messages(conversation_id, limit=12)
     model = os.getenv(connector.model_env, connector.default_model)
     conversation_memory.add_message(conversation_id, "user", safe_message, provider_id, model)
-    history = "\\n".join(f"{item['role']}: {item['content']}" for item in prior[-10:])
+    history = "\n".join(f"{item['role']}: {item['content']}" for item in prior[-10:])
     prompt = (
-        f"Prior conversation (context only):\\n{history}\\n\\nCurrent user message:\\n{safe_message}"
+        f"Prior conversation (context only):\n{history}\n\nCurrent user message:\n{safe_message}"
         if history else safe_message
     )
     try:
