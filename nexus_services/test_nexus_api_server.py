@@ -44,16 +44,20 @@ class TestNexusAPIServer(unittest.TestCase):
             memory = ConversationMemory(os.path.join(tmp, "chat.db"))
             original_memory = nexus_api_server.conversation_memory
             nexus_api_server.conversation_memory = memory
+            seen = {}
+            def complete(prompt, **kwargs):
+                seen["prompt"] = prompt
+                return {
+                    "provider": "codex_gpt", "model": "test-model",
+                    "status": "ADVISORY", "text": "Réponse test",
+                    "can_execute_actions": False,
+                }
             connector = type("Connector", (), {
                 "api_key_env": "TEST_PROVIDER_KEY",
                 "model_env": "TEST_PROVIDER_MODEL",
                 "default_model": "test-model",
                 "status": staticmethod(lambda: {"connector_available": True}),
-                "complete": staticmethod(lambda prompt, **kwargs: {
-                    "provider": "codex_gpt", "model": "test-model",
-                    "status": "ADVISORY", "text": "Réponse test",
-                    "can_execute_actions": False,
-                }),
+                "complete": staticmethod(complete),
             })()
             try:
                 with patch.dict(os.environ, {"NEXUS_API_BEARER_TOKEN": "test-token", "TEST_PROVIDER_MODEL": "test-model"}):
@@ -62,13 +66,15 @@ class TestNexusAPIServer(unittest.TestCase):
                         response = client.post(
                             "/api/v1/ghost/chat/gpt",
                             headers={"Authorization": "Bearer test-token"},
-                            json={"message": "Bonjour", "conversation_id": "test-conversation", "domain": "general"},
+                            json={"message": "Bonjour sk-abcdefghijklmnopqrstuvwxyz012345", "conversation_id": "test-conversation", "domain": "general"},
                         )
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertTrue(response.json()["memory_persisted"])
                 messages = memory.recent_messages("test-conversation")
                 self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
                 self.assertEqual(messages[1]["content"], "Réponse test")
+                self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz012345", seen["prompt"])
+                self.assertIn("[REDACTED]", seen["prompt"])
             finally:
                 nexus_api_server.conversation_memory = original_memory
 
