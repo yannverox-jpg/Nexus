@@ -73,6 +73,17 @@ class ConversationMemory:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_nexus_chat_created ON nexus_chat_messages(conversation_id, id)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS nexus_memory_facts (
+                    fact_key TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'user',
+                    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                )
+            """)
 
     def add_message(self, conversation_id: str, role: str, content: str,
                     provider: str, model: str) -> int:
@@ -93,3 +104,64 @@ class ConversationMemory:
                 (conversation_id, max(1, min(int(limit), 100))),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+
+    def set_fact(
+        self, fact_key: str, content: str, *, category: str = "project",
+        source: str = "user",
+    ) -> Dict[str, Any]:
+        """Upsert a durable user-approved constraint or project fact, rejecting secrets."""
+        key = str(fact_key).strip()
+        category = str(category).strip()
+        value = str(content).strip()
+        if not key or len(key) > 100:
+            raise ValueError("fact_key must contain 1 to 100 characters")
+        if not category or len(category) > 60:
+            raise ValueError("category must contain 1 to 60 characters")
+        if not value or len(value) > 4000:
+            raise ValueError("content must contain 1 to 4000 characters")
+        redacted = self.redact_sensitive_text(value)
+        if redacted != value:
+            raise ValueError("Memory cannot store content that resembles a credential or secret")
+        now_source = str(source).strip()[:80] or "user"
+        with self._connection() as conn:
+            conn.execute(
+                """INSERT INTO nexus_memory_facts(fact_key,category,content,source,active)
+                VALUES(?,?,?,?,1)
+                ON CONFLICT(fact_key) DO UPDATE SET
+                    category=excluded.category, content=excluded.content,
+                    source=excluded.source, active=1,
+                    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')""",
+                (key, category, value, now_source),
+            )
+            row = conn.execute(
+                "SELECT fact_key,category,content,source,active,created_at,updated_at "
+                "FROM nexus_memory_facts WHERE fact_key=?", (key,),
+            ).fetchone()
+        return dict(row)
+
+    def list_facts(self, *, category: str | None = None, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._connection() as conn:
+            if category:
+                rows = conn.execute(
+                    "SELECT fact_key,category,content,source,active,created_at,updated_at "
+                    "FROM nexus_memory_facts WHERE active=1 AND category=? "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (category, max(1, min(int(limit), 200))),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT fact_key,category,content,source,active,created_at,updated_at "
+                    "FROM nexus_memory_facts WHERE active=1 ORDER BY updated_at DESC LIMIT ?",
+                    (max(1, min(int(limit), 200)),),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_fact(self, fact_key: str) -> bool:
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "UPDATE nexus_memory_facts SET active=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE fact_key=? AND active=1",
+                (str(fact_key).strip(),),
+            )
+            return cursor.rowcount > 0
