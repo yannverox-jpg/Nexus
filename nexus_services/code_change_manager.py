@@ -24,7 +24,7 @@ _SECRET_PATTERNS = (
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"(?i)\b(cvv|cvc|security code)\s*[:=]\s*\d{3,4}\b"),
-    re.compile(r"(?<!\\d)(?:\\d[ -]?){12,18}\\d(?!\\d)"),
+    re.compile(r"(?<![0-9])(?:[0-9][ -]?){13,19}(?![0-9])"),
 )
 
 
