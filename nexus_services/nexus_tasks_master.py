@@ -41,9 +41,12 @@ async def main():
 
     # Exemple d'objectif soumis à Nexus
     goal = "Traiter le contrat de données externes et effectuer le règlement de 5 USDC"
+    provider_address = os.getenv("NEXUS_PROVIDER_ADDRESS", "").strip()
+    if not provider_address:
+        raise RuntimeError("NEXUS_PROVIDER_ADDRESS must be configured; refusing to use a hard-coded wallet address.")
     ctx = {
         "budget_usdc": 5.0,
-        "provider_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        "provider_address": provider_address
     }
 
     # Génération et enfilement autonome
