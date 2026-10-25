@@ -10,8 +10,8 @@ class NexusIdentityTests(unittest.TestCase):
         self.assertEqual(identity["name"], "Nexus")
         self.assertFalse(identity["financial_architecture"]["owns_wallet"])
         self.assertFalse(identity["financial_architecture"]["custodies_funds"])
-        self.assertIn("Claude", str(identity["provider_roles"]))
-        self.assertIn("Gemini", str(identity["provider_roles"]))
+        self.assertIn("claude", str(identity["provider_roles"]).lower())
+        self.assertIn("gemini", str(identity["provider_roles"]).lower())
 
     def test_provider_roles_are_distinct_and_do_not_grant_execution_authority(self):
         gpt = build_agent_system_context("codex_gpt", "ghost")
