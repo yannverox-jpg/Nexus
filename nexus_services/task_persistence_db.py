@@ -156,11 +156,28 @@ class NexusDatabaseManager:
             conn.commit()
 
     def get_all_tasks(self) -> List[Dict[str, Any]]:
+        """Return persisted task fields, including results, for canonical adapters and dashboard readers."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT task_id, task_type, priority, status, created_at FROM tasks ORDER BY created_at DESC")
+            cursor.execute(
+                "SELECT task_id, task_type, priority, status, created_at, "
+                "payload, result, error, updated_at FROM tasks ORDER BY created_at DESC"
+            )
             rows = cursor.fetchall()
-            return [{"task_id": r[0], "task_type": r[1], "priority": r[2], "status": r[3], "created_at": r[4]} for r in rows]
+            return [
+                {
+                    "task_id": row[0],
+                    "task_type": row[1],
+                    "priority": row[2],
+                    "status": row[3],
+                    "created_at": row[4],
+                    "payload": json.loads(row[5]) if row[5] else {},
+                    "result": json.loads(row[6]) if row[6] else None,
+                    "error": row[7],
+                    "updated_at": row[8],
+                }
+                for row in rows
+            ]
 
     def get_recent_market_events(self, limit: int = 10) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
