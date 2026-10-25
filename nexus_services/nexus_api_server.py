@@ -13,11 +13,6 @@ from web3 import Web3
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-try:
-    import MetaTrader5 as mt5
-except ImportError:
-    mt5 = None
-
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
 from web3_escrow_billing import NexusWeb3EscrowBilling
@@ -140,10 +135,6 @@ class WithdrawRequest(BaseModel):
     to_address: str
     amount_usdc: float
 
-class BrokerWithdrawRequest(BaseModel):
-    to_address: str
-    amount_usd: float
-
 class HITLApprovalRequest(BaseModel):
     hitl_id: str
 
@@ -177,12 +168,11 @@ async def startup_event():
 
 @app.get("/health")
 def health_check():
-    mt5_status = mt5.initialize() if mt5 else False
+    """Public liveness only; does not initialize or query a broker terminal."""
     return {
         "status": "online",
-        "department": "NFX_GHOST_v2.5_SENTINEL",
+        "department": "NEXUS_CANONICAL_RUNTIME",
         "version": "3.5",
-        "broker_connected": mt5_status,
         "connected": w3.is_connected()
     }
 
@@ -256,68 +246,7 @@ def approve_hitl_action(req: HITLApprovalRequest):
         raise HTTPException(status_code=404, detail="Action HITL introuvable ou déjà traitée.")
     return {"status": "APPROVED", "hitl_id": req.hitl_id}
 
-# --- ENDPOINTS BROKER & TRADING ---
-
-@app.get("/api/v1/broker/account")
-def get_broker_account():
-    if mt5 and mt5.initialize():
-        info = mt5.account_info()
-        if info:
-            return {
-                "balance": info.balance,
-                "equity": info.equity,
-                "margin": info.margin_free,
-                "currency": info.currency,
-                "login": info.login
-            }
-    raise HTTPException(
-        status_code=503,
-        detail="MetaTrader 5 is not connected; Nexus will not fabricate account balances.",
-    )
-
-@app.get("/api/v1/broker/positions")
-def get_broker_positions():
-    if mt5 and mt5.initialize():
-        positions = mt5.positions_get(group="*")
-        if positions:
-            pos_list = []
-            for pos in positions:
-                tick = mt5.symbol_info_tick(pos.symbol)
-                curr_price = tick.bid if pos.type == mt5.POSITION_TYPE_BUY else tick.ask
-                multiplier = 100.0 if "JPY" in pos.symbol or "XAU" in pos.symbol else 10000.0
-                direction_factor = 1 if pos.type == mt5.POSITION_TYPE_BUY else -1
-                profit_pips = (curr_price - pos.price_open) * direction_factor * multiplier
-                pos_list.append({
-                    "ticket": pos.ticket,
-                    "symbol": pos.symbol,
-                    "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
-                    "volume": pos.volume,
-                    "price_open": pos.price_open,
-                    "current_price": curr_price,
-                    "profit_pips": profit_pips
-                })
-            return {"positions": pos_list}
-    return {"positions": []}
-
-@app.get("/api/v1/broker/history")
-def get_arbitrage_history():
-    return {"arbitrages": get_all_tasks()["tasks"]}
-
-@app.post("/api/v1/broker/withdraw")
-def request_broker_withdrawal(req: BrokerWithdrawRequest):
-    if req.amount_usd <= 0:
-        raise HTTPException(status_code=400, detail="Montant invalide.")
-
-    tx_id = f"withdraw_{int(time.time())}"
-    db.save_escrow(tx_id, "NEXUS_VAULT", req.to_address, req.amount_usd, "WITHDRAWAL_REQUESTED")
-    return {
-        "status": "REQUESTED",
-        "request_id": tx_id,
-        "amount_usd": req.amount_usd,
-        "destination": req.to_address
-    }
-
-@app.post("/api/v1/treasury/withdraw")
+# Broker/MT5 account integration intentionally removed.\n\n@app.post("/api/v1/treasury/withdraw")
 async def withdraw_usdc(request: WithdrawRequest):
     # Disabled until a separate treasury service has scoped authorization,
     # transaction limits, replay protection, human approval, and audit proof.
