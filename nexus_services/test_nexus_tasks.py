@@ -3,7 +3,7 @@ import asyncio
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
 from web3_escrow_billing import NexusWeb3EscrowBilling
-from module_mocks import NexusOrchestrator, NexusWeb3WalletManager
+from nexus_services.test_fakes import NexusOrchestrator, NexusWeb3WalletManager
 
 class TestNexusServices(unittest.IsolatedAsyncioTestCase):
 
