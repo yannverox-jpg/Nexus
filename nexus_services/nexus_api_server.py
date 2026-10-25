@@ -106,11 +106,7 @@ ERC20_ABI = [
 
 # Instances globales des modules & GHOST Kernel
 db = NexusDatabaseManager()
-try:
-    from module1_orchestrator import NexusOrchestrator
-    from module2_web3_wallet import NexusWeb3WalletManager
-except ImportError:
-    from module_mocks import NexusOrchestrator, NexusWeb3WalletManager
+from legacy_runtime_adapter import NexusOrchestrator, NexusWeb3WalletManager
 
 orchestrator = NexusOrchestrator(max_agents=10)
 catalog = ServiceCatalogRegistry()
