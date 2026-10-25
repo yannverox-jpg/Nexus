@@ -1,14 +1,13 @@
 """Shared durable SQLite connection and migration primitives for Nexus.
 
-SQLite is appropriate for one durable application instance. For multi-instance,
-high-write production deployments, use a PostgreSQL-backed repository instead.
+SQLite is suitable for a durable single-node deployment. Multi-instance and
+high-write deployments should use a PostgreSQL-backed repository instead.
 """
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 from typing import Callable, Iterable
-
 
 Migration = tuple[int, Callable[[sqlite3.Connection], None]]
 
@@ -19,26 +18,34 @@ def connect_sqlite(
     timeout: float = 30.0,
     check_same_thread: bool = False,
 ) -> sqlite3.Connection:
-    """Open a consistently configured SQLite connection.
-
-    File-backed databases use WAL, FULL synchronous commits, foreign keys, and
-    a bounded busy timeout. Parent directories are created with normal OS
-    permissions; credentials and payment-card data must never be stored here.
-    """
+    """Open a consistently configured connection with durable file settings."""
     path = str(database_path)
+    memory_database = (
+        path == ":memory:" or "mode=memory" in path or path.startswith("file::memory:")
+    )
     if path != ":memory:" and not path.startswith("file:"):
         Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+    bounded_timeout = max(0.1, float(timeout))
     conn = sqlite3.connect(
         path,
-        timeout=max(0.1, float(timeout)),
+        timeout=bounded_timeout,
         uri=path.startswith("file:"),
         check_same_thread=check_same_thread,
     )
     conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout = {int(max(0.1, float(timeout)) * 1000)}")
+    conn.execute(f"PRAGMA busy_timeout = {int(bounded_timeout * 1000)}")
     conn.execute("PRAGMA foreign_keys = ON")
-    if path != ":memory:" and "mode=memory" not in path:
-        conn.execute("PRAGMA journal_mode = WAL")
+    if not memory_database:
+        # WAL mode persists in the database; avoid attempting to reset it on
+        # every connection, which can create unnecessary lock contention.
+        try:
+            current_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            if current_mode != "wal":
+                conn.execute("PRAGMA journal_mode = WAL")
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                conn.close()
+                raise
         conn.execute("PRAGMA synchronous = FULL")
     return conn
 
@@ -48,7 +55,7 @@ def apply_migrations(
     component: str,
     migrations: Iterable[Migration],
 ) -> int:
-    """Apply ordered, component-scoped migrations once, atomically per migration."""
+    """Apply ordered, component-scoped schema migrations once, atomically."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS nexus_schema_migrations (
@@ -60,14 +67,14 @@ def apply_migrations(
         """
     )
     current_row = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM nexus_schema_migrations WHERE component = ?",
+        "SELECT COALESCE(MAX(version), 0) AS version "
+        "FROM nexus_schema_migrations WHERE component = ?",
         (component,),
     ).fetchone()
     current = int(current_row["version"])
     for version, upgrade in sorted(migrations, key=lambda item: item[0]):
         if version <= current:
             continue
-        # Explicit transaction makes each schema upgrade all-or-nothing.
         conn.execute("BEGIN IMMEDIATE")
         try:
             upgrade(conn)
