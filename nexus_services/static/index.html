@@ -89,13 +89,13 @@
     $("nexus-name").textContent = identity.name;
     $("mission").textContent = identity.mission;
     $("identity").textContent = identity.identity;
-    $("readiness").textContent = caps.execution.ready_status;
+    $("readiness").textContent = caps.execution.ready_status + " · intégrations externes : " + caps.execution.external_integration_status;
     $("metrics").replaceChildren();
     const items = [
-      ["Mémoire persistante", caps.persistent_memory_configured ? "Configurée" : "À configurer"],
-      ["Fournisseurs connectés", caps.provider_count_configured + " / 3"],
+      ["Mémoire SQLite", caps.persistent_memory_configured ? caps.memory_durability : "À configurer"],
+      ["Clés API configurées", caps.provider_count_configured + " / 3"],
       ["Navigation navigateur", caps.browser.playwright_package_available && caps.browser.allowed_hosts_configured ? "Package + allowlist" : "Partielle / indisponible"],
-      ["Adaptation du code", caps.code_adaptation.mode + " · approbation requise"],
+      ["Adaptation du code", caps.code_adaptation.mode + (caps.code_adaptation.github_pr_workflow_configured ? " · PR activée" : " · GitHub à configurer")],
       ["Transferts financiers", caps.execution.financial_transfers_enabled ? "Activés" : "Désactivés par sécurité"]
     ];
     for (const [title,value] of items) {
