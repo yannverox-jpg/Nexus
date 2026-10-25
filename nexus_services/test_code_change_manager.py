@@ -21,6 +21,8 @@ class CodeChangeManagerTests(unittest.TestCase):
     def test_content_scanner_rejects_realistic_secrets(self):
         with self.assertRaises(ValueError):
             CodeChangeManager._validate_content('API_KEY = "sk-abcdefghijklmnopqrstuvwxyz123456"')
+        with self.assertRaises(ValueError):
+            CodeChangeManager._validate_content("card=4111 1111 1111 1111")
         self.assertEqual(CodeChangeManager._validate_content("def hello():\n    return 'safe'\n"), "def hello():\n    return 'safe'\n")
 
 
