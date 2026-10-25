@@ -9,7 +9,10 @@ import re
 import sqlite3
 import uuid
 
-from .sqlite_storage import connect_sqlite
+try:
+    from .sqlite_storage import connect_sqlite
+except ImportError:
+    from sqlite_storage import connect_sqlite
 from typing import Any
 
 
