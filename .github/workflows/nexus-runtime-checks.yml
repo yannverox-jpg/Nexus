@@ -29,3 +29,4 @@ jobs:
           nexus_services.test_operational_dashboard
           nexus_services.test_multi_agent_orchestrator
           nexus_services.test_legacy_runtime_adapter
+          nexus_services.test_memory_store
