@@ -301,7 +301,7 @@ def get_broker_positions():
 
 @app.get("/api/v1/broker/history")
 def get_arbitrage_history():
-    return {"arbitrages": db.get_all_tasks()}
+    return {"arbitrages": get_all_tasks()["tasks"]}
 
 @app.post("/api/v1/broker/withdraw")
 def request_broker_withdrawal(req: BrokerWithdrawRequest):
@@ -331,13 +331,36 @@ async def withdraw_usdc(request: WithdrawRequest):
 async def submit_autonomous_goal(req: SubmitGoalRequest):
     ctx = {"budget_usdc": req.budget_usdc, "provider_address": req.provider_address}
     task_ids = await auto_engine.decompose_and_enqueue_goal(req.goal, ctx)
-    for tid in task_ids:
-        db.save_task(task_id=tid, task_type="AUTONOMOUS_GOAL", priority="HIGH", status="ENQUEUED", payload=ctx)
-    return {"status": "SUCCESS", "goal": req.goal, "task_ids": task_ids, "count": len(task_ids)}
+    # Tasks already exist in the canonical OperationalJournal. Do not duplicate
+    # them in the legacy task table or claim execution at enqueue time.
+    return {
+        "status": "QUEUED",
+        "execution_mode": "NOT_EXECUTED",
+        "source_of_truth": "operational_journal",
+        "goal": req.goal,
+        "task_ids": task_ids,
+        "count": len(task_ids),
+    }
 
 @app.get("/api/v1/tasks")
 def get_all_tasks():
-    return {"tasks": db.get_all_tasks()}
+    journal = orchestrator.runtime.operational_journal
+    tasks = journal.list_tasks(limit=100)
+    return {"tasks": [
+        {
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "priority": task.priority,
+            "status": task.status.value,
+            "payload": task.payload,
+            "result": task.result,
+            "error": task.error,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "execution_mode": task.execution_mode,
+        }
+        for task in tasks
+    ]}
 
 @app.get("/api/v1/marketplace/services")
 def list_services():
@@ -370,7 +393,7 @@ async def websocket_monitoring(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            tasks = db.get_all_tasks()
+            tasks = get_all_tasks()["tasks"]
             data = {
                 "timestamp": asyncio.get_event_loop().time(),
                 "active_agents": len(orchestrator.agents),
