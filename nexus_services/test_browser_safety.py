@@ -80,7 +80,7 @@ class BrowserFieldSafetyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_blocks_unallowlisted_current_host_for_actions(self):
         class Page:
-            url = "https://evil.example.test/"
+            url = "https://evil.test/"
             def locator(self, _selector): raise AssertionError("must reject before locator")
         agent = BrowserAgent(allowed_domains=["example.test"])
         agent.page = Page()
