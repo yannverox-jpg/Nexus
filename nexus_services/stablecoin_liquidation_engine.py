@@ -2,9 +2,9 @@ import time
 import json
 from typing import Dict, Any, Optional
 try:
-    from module2_web3_wallet import NexusWeb3WalletManager
+    from .legacy_runtime_adapter import NexusWeb3WalletManager
 except ImportError:
-    from module_mocks import NexusWeb3WalletManager
+    from legacy_runtime_adapter import NexusWeb3WalletManager
 from task_persistence_db import NexusDatabaseManager
 
 class NexusStablecoinLiquidationEngine:
