@@ -11,4 +11,4 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: NEXUS_OPERATIONAL_DB_PATH
-        value: /var/data/nexus_operational.db
+        value: /tmp/nexus_operational.db
