@@ -52,12 +52,21 @@ class StrictRequest(BaseModel):
         extra = "forbid"
 
 
+class PlatformAccountRequest(StrictRequest):
+    platform: str
+    account_reference: str
+    currency: str
+    balance: str
+    evidence_reference: str
+    observed_at: str | None = None
+
+
 class PayoutDestinationRequest(StrictRequest):
     provider: str
-    destination_type: str
+    destination_type: str = "CARD"
     label: str
     currency: str
-    last4: str | None = None
+    last4: str
 
 
 class RevenueEntryRequest(StrictRequest):
@@ -113,6 +122,23 @@ def get_overview():
 @app.get("/api/v1/payouts/overview")
 def get_payout_overview():
     return payout_ledger.overview()
+
+
+@app.get("/api/v1/platform-accounts")
+def list_platform_accounts():
+    return {
+        "ownership": "EXTERNAL_PLATFORM_ACCOUNTS",
+        "nexus_owned_wallet": False,
+        "accounts": payout_ledger.list_platform_accounts(),
+    }
+
+
+@app.post("/api/v1/platform-accounts")
+def register_platform_account(request: PlatformAccountRequest):
+    try:
+        return payout_ledger.register_platform_account(**request.dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/payouts/destinations")
