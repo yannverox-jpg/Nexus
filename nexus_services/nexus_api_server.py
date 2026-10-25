@@ -3,8 +3,9 @@ import json
 import os
 import sys
 import time
+import secrets
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -38,14 +39,38 @@ from nexus_websocket_proxy import router as ws_proxy_router
 
 app = FastAPI(title="Nexus NFX-GHOST v2.5 Autonomous Predictive Sentinel API", version="3.5")
 
-# Autoriser les appels CORS depuis le Front-End Replit & Base44
+# Fail closed: no wildcard browser origins and no public API access without a token.
+_allowed_origins = [
+    origin.strip() for origin in os.getenv("NEXUS_API_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+@app.middleware("http")
+async def require_api_bearer_token(request: Request, call_next):
+    # Minimal liveness endpoint only. All functional routes fail closed when
+    # the secret is missing, and use constant-time comparison when configured.
+    if request.url.path == "/health":
+        return await call_next(request)
+    expected = os.getenv("NEXUS_API_BEARER_TOKEN", "").strip()
+    supplied = request.headers.get("authorization", "")
+    if not expected:
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "NEXUS_API_BEARER_TOKEN is not configured; API is locked"},
+        )
+    token = supplied[7:].strip() if supplied.lower().startswith("bearer ") else ""
+    if not token or not secrets.compare_digest(token, expected):
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
 
 app.include_router(ws_proxy_router)
 
@@ -228,13 +253,10 @@ def get_broker_account():
                 "currency": info.currency,
                 "login": info.login
             }
-    return {
-        "balance": 10500.00,
-        "equity": 10850.50,
-        "margin": 9500.00,
-        "currency": "USD",
-        "login": 777999
-    }
+    raise HTTPException(
+        status_code=503,
+        detail="MetaTrader 5 is not connected; Nexus will not fabricate account balances.",
+    )
 
 @app.get("/api/v1/broker/positions")
 def get_broker_positions():
@@ -280,37 +302,13 @@ def request_broker_withdrawal(req: BrokerWithdrawRequest):
 
 @app.post("/api/v1/treasury/withdraw")
 async def withdraw_usdc(request: WithdrawRequest):
-    if not PRIVATE_KEY:
-        raise HTTPException(status_code=500, detail="Clé privée NEXUS_PRIVATE_KEY manquante dans l'environnement")
-
-    if not w3.is_address(request.to_address):
-        raise HTTPException(status_code=400, detail="Adresse destination invalide")
-
-    try:
-        account = w3.eth.account.from_key(PRIVATE_KEY)
-        contract = w3.eth.contract(address=Web3.to_checksum_address(USDC_CONTRACT_ADDRESS), abi=ERC20_ABI)
-        amount_in_units = int(request.amount_usdc * 10**6)
-        nonce = w3.eth.get_transaction_count(account.address)
-        tx = contract.functions.transfer(
-            Web3.to_checksum_address(request.to_address),
-            amount_in_units
-        ).build_transaction({
-            'chainId': 137,
-            'gas': 100000,
-            'gasPrice': w3.eth.gas_price,
-            'nonce': nonce,
-        })
-        signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-        return {
-            "status": "success",
-            "tx_hash": w3.to_hex(tx_hash),
-            "amount_usdc": request.amount_usdc,
-            "recipient": request.to_address,
-            "network": "Polygon"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Disabled until a separate treasury service has scoped authorization,
+    # transaction limits, replay protection, human approval, and audit proof.
+    # Merely setting a private key must never activate money movement.
+    raise HTTPException(
+        status_code=410,
+        detail="Treasury withdrawals are disabled pending a separately secured approval workflow.",
+    )
 
 @app.post("/api/v1/goals/submit")
 async def submit_autonomous_goal(req: SubmitGoalRequest):
