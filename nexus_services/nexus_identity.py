@@ -65,6 +65,7 @@ def get_capability_status() -> dict[str, Any]:
         and "mode=memory" not in database_path.casefold()
         and not (path is not None and str(path) == ":memory:")
     )
+    durable_volume_confirmed = os.getenv("NEXUS_STORAGE_DURABLE", "").strip().casefold() in {"1", "true", "yes"}
     providers = get_connector_status()
     configured = [item["provider_id"] for item in providers if item["connector_available"]]
     try:
@@ -86,6 +87,11 @@ def get_capability_status() -> dict[str, Any]:
         "chat_api_available": True,
         "persistent_memory_configured": persistent_memory,
         "memory_database_path_configured": bool(database_path),
+        "memory_durability": (
+            "DURABLE_VOLUME_CONFIRMED" if persistent_memory and durable_volume_confirmed
+            else "FILE_BACKED_VOLUME_NOT_VERIFIED" if persistent_memory
+            else "IN_MEMORY_ONLY"
+        ),
         "providers": providers,
         "providers_configured": configured,
         "provider_count_configured": len(configured),
