@@ -51,7 +51,14 @@ async def main():
 
     # Exemple de scénario avec enregistrement DB
     goal = "Exécuter la vérification du contrat et sécuriser l'escrow USDC"
-    ctx = {"budget_usdc": 10.0, "provider_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}
+    provider_address = os.getenv("NEXUS_PROVIDER_ADDRESS", "").strip()
+    client_address = os.getenv("NEXUS_CLIENT_ADDRESS", "").strip()
+    if not provider_address or not client_address:
+        raise RuntimeError(
+            "NEXUS_PROVIDER_ADDRESS and NEXUS_CLIENT_ADDRESS must be configured; "
+            "refusing to use hard-coded wallet addresses."
+        )
+    ctx = {"budget_usdc": 10.0, "provider_address": provider_address}
 
     task_ids = await auto_engine.decompose_and_enqueue_goal(goal, ctx)
 
@@ -61,8 +68,8 @@ async def main():
 
     # Création d'un escrow de test
     escrow_id = "escrow-test-001"
-    escrow.create_escrow_lock(escrow_id, "0xClientAddress", ctx["provider_address"], ctx["budget_usdc"])
-    db.save_escrow(escrow_id, "0xClientAddress", ctx["provider_address"], ctx["budget_usdc"], "LOCKED")
+    escrow.create_escrow_lock(escrow_id, client_address, ctx["provider_address"], ctx["budget_usdc"])
+    db.save_escrow(escrow_id, client_address, ctx["provider_address"], ctx["budget_usdc"], "LOCKED")
 
     # Simulation d'un échec de qualité -> arbitrage automatique
     print("\n⚠️ Simulation d'une livraison défectueuse pour test d'arbitrage...")
