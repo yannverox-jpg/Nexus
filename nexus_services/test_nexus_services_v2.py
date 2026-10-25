@@ -4,7 +4,7 @@ import tempfile
 from task_persistence_db import NexusDatabaseManager
 from dispute_resolution import NexusDisputeResolutionEngine
 from web3_escrow_billing import NexusWeb3EscrowBilling
-from module_mocks import NexusWeb3WalletManager
+from nexus_services.test_fakes import NexusWeb3WalletManager
 
 class TestNexusServicesV2(unittest.TestCase):
 
