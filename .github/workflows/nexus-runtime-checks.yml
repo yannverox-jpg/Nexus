@@ -1,0 +1,21 @@
+name: Nexus canonical runtime checks
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  multi-agent-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run provider coordination and persistent-memory tests
+        run: python -m unittest nexus_services.test_multi_agent_orchestrator -v
