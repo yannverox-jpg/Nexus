@@ -3,7 +3,7 @@ import os
 import tempfile
 from stablecoin_liquidation_engine import NexusStablecoinLiquidationEngine
 from task_persistence_db import NexusDatabaseManager
-from module_mocks import NexusWeb3WalletManager
+from nexus_services.test_fakes import NexusWeb3WalletManager
 
 class TestStablecoinLiquidationEngine(unittest.IsolatedAsyncioTestCase):
 
