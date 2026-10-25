@@ -11,6 +11,18 @@ Nexus uses the canonical FastAPI runtime in `nexus_services/nexus_api_server.py`
 
 The unauthenticated `/health` route is liveness-only. Functional routes are locked when the bearer token is missing or invalid.
 
+## Identity, chat, and memory
+
+The canonical API exposes `/api/v1/identity`, `/api/v1/capabilities`, and `/api/v1/providers` so the command center can show what Nexus is configured to do rather than claiming 100% readiness. Open `/dashboard` for the authenticated identity panel and chat with GPT, Gemini, or Claude through their official API connectors. Provider keys are never embedded in the browser. A configured API key means only that a key is present; the status endpoint does not claim the provider has authenticated successfully until a real request succeeds.
+
+The provider roles are intentionally distinct: GPT reviews reasoning and contradictions; Gemini researches evidence and provenance; Claude reviews architecture, workflows, and e-commerce design. All three are advisors, not an authorization mechanism. Their answers are persisted in SQLite with common secret patterns redacted. Long-term project facts and constraints can be explicitly saved in the memory panel and are included as context in later chats; they cannot override security rules.
+
+Nexus has three built-in safe executors for capability assessment, workflow planning, and reconciliation of saved external-platform balance snapshots. Unsupported work fails closed until a real integration executor is configured. This is readiness for internal planning, not a claim that every platform can already be controlled.
+
+## Code adaptation
+
+When `NEXUS_GITHUB_REPOSITORY` and `NEXUS_GITHUB_TOKEN` are configured, the dashboard can submit a complete proposed file to `/api/v1/code-change/proposals`. Nexus creates a separate branch and draft pull request; GitHub Actions runs checks and a human must review and merge. The running production process is never self-edited and Nexus cannot merge its own changes. The token needs repository contents read/write and pull-request write permissions; keep it in the server secret store, never in the browser or repository.
+
 ## Persistent storage
 
 The operational journal, conversation memory, payout ledger, and task repositories use SQLite-backed storage. Set `NEXUS_OPERATIONAL_DB_PATH` to a file path on a durable volume. Nexus creates the parent directory if needed. The shared connection layer configures WAL, full synchronous commits, foreign keys, and a bounded busy timeout. The canonical task repository maintains versioned migrations and uses its own `canonical_tasks` table to avoid colliding with the legacy task table.
