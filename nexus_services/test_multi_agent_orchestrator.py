@@ -12,8 +12,10 @@ class MultiAgentCoordinationTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db = NexusDatabaseManager(db_path=os.path.join(tmp, "nexus.db"))
 
+            captured_systems = {}
             def fake_complete(provider_id):
                 def complete(prompt, *, system="", google_search=False):
+                    captured_systems[provider_id] = system
                     return {
                         "provider": provider_id,
                         "model": "test-model",
@@ -35,12 +37,15 @@ class MultiAgentCoordinationTests(unittest.IsolatedAsyncioTestCase):
                 result = await coordinate_advisors(
                     "Review runtime contracts", domain="microservices",
                     db_manager=db, readiness_pct=25.0,
+                    additional_context="persistent constraint: no Nexus-owned wallet",
                 )
 
             self.assertEqual(result["status"], "COMPLETED")
             self.assertEqual(len(result["providers_available"]), 3)
             self.assertTrue(result["persisted"])
             self.assertEqual(result["action_execution"], "NOT_PERFORMED")
+            for provider_id in ("codex_gpt", "gemini", "claude"):
+                self.assertIn("persistent constraint: no Nexus-owned wallet", captured_systems[provider_id])
             rows = db.get_recent_ai_decisions(limit=10)
             self.assertTrue(any(row.get("decision_id") == result["run_id"] for row in rows))
 
