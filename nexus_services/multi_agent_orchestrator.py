@@ -17,9 +17,11 @@ except ImportError:
     from agent_roles import build_agent_system_context
 
 
-async def _ask_provider(provider_id: str, prompt: str, domain: str) -> dict[str, Any]:
+async def _ask_provider(
+    provider_id: str, prompt: str, domain: str, additional_context: str = ""
+) -> dict[str, Any]:
     connector = CONNECTORS[provider_id]
-    system = build_agent_system_context(provider_id, domain)
+    system = build_agent_system_context(provider_id, domain, additional_context)
     try:
         result = await asyncio.to_thread(
             connector.complete,
@@ -45,6 +47,7 @@ async def coordinate_advisors(
     domain: str = "general",
     db_manager: Any = None,
     readiness_pct: float = 0.0,
+    additional_context: str = "",
 ) -> dict[str, Any]:
     """Ask GPT, Gemini and Claude concurrently and persist the observed outcome."""
     if not isinstance(prompt, str) or not prompt.strip():
@@ -55,7 +58,10 @@ async def coordinate_advisors(
     run_id = "ai-review-" + uuid.uuid4().hex
     provider_ids = ("codex_gpt", "gemini", "claude")
     results = await asyncio.gather(
-        *(_ask_provider(provider_id, prompt.strip(), domain) for provider_id in provider_ids)
+        *(
+            _ask_provider(provider_id, prompt.strip(), domain, additional_context)
+            for provider_id in provider_ids
+        )
     )
     available = [item for item in results if item.get("status") == "ADVISORY"]
     outcome = {
