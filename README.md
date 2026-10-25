@@ -19,6 +19,14 @@ The provider roles are intentionally distinct: GPT reviews reasoning and contrad
 
 Nexus has three built-in safe executors for capability assessment, workflow planning, and reconciliation of saved external-platform balance snapshots. Unsupported work fails closed until a real integration executor is configured. This is readiness for internal planning, not a claim that every platform can already be controlled.
 
+## Browser automation and network settings
+
+Nexus uses the existing nexus_services/stealth_browser_agent.py compatibility module as a policy-aware Playwright browser agent; despite the historical filename, it does not implement stealth or anti-bot evasion. Navigation is limited to NEXUS_BROWSER_ALLOWED_HOSTS. The optional NEXUS_BROWSER_PROXY selects one configured HTTP, HTTPS, or SOCKS5 proxy for authorized privacy and test workflows. Store proxy credentials in NEXUS_BROWSER_PROXY_USERNAME and NEXUS_BROWSER_PROXY_PASSWORD, never in the URL or source code. There is no proxy rotation.
+
+Browser locale and timezone can be set with NEXUS_BROWSER_LOCALE and NEXUS_BROWSER_TIMEZONE. Geolocation emulation is off by default and requires NEXUS_BROWSER_ALLOW_GEOLOCATION=true plus valid latitude/longitude environment variables. These settings are for authorized testing or workflows where location simulation is permitted; they do not change the public IP address.
+
+The browser detects common CAPTCHA and anti-bot challenge indicators and pauses automation with HUMAN_INTERVENTION_REQUIRED. It does not solve CAPTCHA challenges, evade access controls, spoof browser fingerprints, submit forms, log in, or make payments. Sensitive fields and form submissions remain human-controlled. httpx is available for API clients that need explicit timeouts and network configuration; API integrations must honor each provider's terms and rate limits.
+
 ## Code adaptation
 
 When `NEXUS_GITHUB_REPOSITORY` and `NEXUS_GITHUB_TOKEN` are configured, the dashboard can submit a complete proposed file to `/api/v1/code-change/proposals`. Nexus creates a separate branch and draft pull request; GitHub Actions runs checks and a human must review and merge. The running production process is never self-edited and Nexus cannot merge its own changes. The token needs repository contents read/write and pull-request write permissions; keep it in the server secret store, never in the browser or repository.
