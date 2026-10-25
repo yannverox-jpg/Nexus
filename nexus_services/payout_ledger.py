@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import sqlite3
 import uuid
+
+from .sqlite_storage import connect_sqlite
 from typing import Any
 
 
@@ -58,15 +60,10 @@ class PayoutLedger:
 
     def __init__(self, database_path: str):
         self.database_path = database_path
-        if database_path != ":memory:" and not database_path.startswith("file:"):
-            Path(database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        return connect_sqlite(self.database_path, timeout=30)
 
     def _initialize(self) -> None:
         with self._connect() as conn:
