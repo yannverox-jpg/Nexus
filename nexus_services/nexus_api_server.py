@@ -25,6 +25,7 @@ from ai_connectors import CONNECTORS
 from agent_roles import build_agent_system_context, get_provider_status
 from memory_store import ConversationMemory, configured_database_path
 from nexus_identity import get_identity, get_capability_status
+from code_change_manager import CodeChangeManager, code_change_status
 from ghost_institutional_predictive_engine import (
     TopologicalCointegrationGraph,
     MCPTryptychOrchestrator,
@@ -119,6 +120,13 @@ class MemoryFactRequest(BaseModel):
     content: str
     category: str = "project"
 
+
+class CodeChangeProposalRequest(BaseModel):
+    path: str
+    content: str
+    title: str
+    summary: str
+
 @app.on_event("startup")
 async def startup_event():
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
@@ -150,6 +158,23 @@ def capability_status():
 @app.get("/api/v1/providers")
 def provider_status():
     return {"providers": get_provider_status()}
+
+
+@app.get("/api/v1/code-change/status")
+def code_change_status_endpoint():
+    return code_change_status()
+
+
+@app.post("/api/v1/code-change/proposals")
+def propose_code_change(req: CodeChangeProposalRequest):
+    try:
+        return CodeChangeManager().propose_file_change(
+            path=req.path, content=req.content, title=req.title, summary=req.summary,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/memory/facts")
