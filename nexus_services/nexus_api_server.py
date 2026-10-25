@@ -123,7 +123,7 @@ boot_daemon: Optional[NexusAutonomousBootDaemon] = None
 class SubmitGoalRequest(BaseModel):
     goal: str
     budget_usdc: float = 0.0
-    provider_address: Optional[str] = "0x0000000000000000000000000000000000000000"
+    provider_address: Optional[str] = None
 
 class RegisterServiceRequest(BaseModel):
     name: str
