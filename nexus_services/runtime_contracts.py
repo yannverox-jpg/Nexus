@@ -15,9 +15,9 @@ from enum import Enum
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 try:
-    from .sqlite_storage import connect_sqlite
+    from .sqlite_storage import apply_migrations, connect_sqlite
 except ImportError:  # legacy direct-module imports
-    from sqlite_storage import connect_sqlite
+    from sqlite_storage import apply_migrations, connect_sqlite
 
 
 class TaskStatus(str, Enum):
@@ -358,39 +358,73 @@ class SQLiteTaskRepository(TaskRepository):
         return connect_sqlite(self.db_path, timeout=self.timeout)
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        def create_task_table(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS tasks (
+                CREATE TABLE IF NOT EXISTS canonical_tasks (
                     task_id TEXT PRIMARY KEY,
-                    task_type TEXT,
-                    source TEXT,
-                    agent TEXT,
-                    priority TEXT,
-                    status TEXT,
-                    payload TEXT,
+                    task_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    agent TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
                     result TEXT,
                     error TEXT,
-                    created_at REAL,
-                    updated_at REAL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
                     started_at REAL,
                     completed_at REAL,
                     verified_at REAL,
                     run_id TEXT,
                     parent_task_id TEXT,
                     correlation_id TEXT,
-                    proof TEXT,
-                    metadata TEXT
+                    proof TEXT NOT NULL,
+                    metadata TEXT NOT NULL
                 )
                 """
             )
-            conn.commit()
+            # Upgrade data from this repository's former table only when it has
+            # the canonical columns. The legacy task manager's simpler "tasks"
+            # table is intentionally left untouched.
+            old_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+            ).fetchone()
+            if old_table:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+                required = {
+                    "task_id", "task_type", "source", "agent", "priority", "status",
+                    "payload", "result", "error", "created_at", "updated_at",
+                    "started_at", "completed_at", "verified_at", "run_id",
+                    "parent_task_id", "correlation_id", "proof", "metadata",
+                }
+                if required.issubset(columns):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO canonical_tasks
+                        SELECT task_id, task_type, source, agent, priority, status, payload,
+                        result, error, created_at, updated_at, started_at, completed_at,
+                        verified_at, run_id, parent_task_id, correlation_id, proof, metadata
+                        FROM tasks"""
+                    )
+
+        def create_task_indexes(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_canonical_tasks_created "
+                "ON canonical_tasks(created_at DESC)"
+            )
+
+        with self._connect() as conn:
+            apply_migrations(
+                conn,
+                "sqlite_task_repository",
+                [(1, create_task_table), (2, create_task_indexes)],
+            )
 
     def save_task(self, task: TaskRecord) -> TaskRecord:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO tasks (
+                INSERT INTO canonical_tasks (
                     task_id, task_type, source, agent, priority, status, payload, result, error,
                     created_at, updated_at, started_at, completed_at, verified_at, run_id,
                     parent_task_id, correlation_id, proof, metadata
@@ -441,7 +475,7 @@ class SQLiteTaskRepository(TaskRepository):
 
     def get_task(self, task_id: str) -> Optional[TaskRecord]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            row = conn.execute("SELECT * FROM canonical_tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             return None
         return TaskRecord(
@@ -469,7 +503,7 @@ class SQLiteTaskRepository(TaskRepository):
     def list_tasks(self, limit: int = 100) -> List[TaskRecord]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM canonical_tasks ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self.get_task(row["task_id"]) for row in rows]
