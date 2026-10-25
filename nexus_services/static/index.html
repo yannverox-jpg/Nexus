@@ -2,42 +2,142 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nexus Runtime Status</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexus · Cerveau et chat</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; }
-    main { max-width: 760px; margin: 8vh auto; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; }
-    h1 { color: #38bdf8; }
-    .state { font-weight: 700; }
-    .muted { color: #94a3b8; }
-    code { color: #7dd3fc; }
+    :root{color-scheme:dark;--bg:#071522;--panel:#0c2941;--line:#25465b;--text:#f3f7fa;--muted:#a9bac8;--green:#36d399;--orange:#ff9f43}
+    *{box-sizing:border-box}body{margin:0;padding:24px;background:radial-gradient(ellipse at top,#103653,var(--bg) 65%);color:var(--text);font:16px system-ui,sans-serif}
+    main{max-width:1100px;margin:0 auto}.hero,.panel{background:#0c2941eF;border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:16px}
+    h1,h2,h3{margin-top:0}h1{color:var(--green)}.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    .metric{border:1px solid var(--line);border-radius:12px;padding:14px;background:#071b2e}.status{font-weight:700;color:var(--green)}.warn{color:var(--orange)}
+    label{display:block;font-size:.9rem;color:var(--muted);margin:10px 0 6px}input,select,textarea,button{font:inherit;border-radius:9px;border:1px solid var(--line);padding:10px;background:#071b2e;color:var(--text);width:100%}
+    button{background:#14513f;border-color:#36d399;cursor:pointer;font-weight:700}button:disabled{opacity:.45;cursor:not-allowed}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    #messages{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow:auto;margin:16px 0}
+    .message{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:12px;padding:12px;max-width:92%}.user{align-self:flex-end;background:#123e35}.assistant{align-self:flex-start;background:#071b2e}
+    .tiny{font-size:.82rem;color:var(--muted)}ul{padding-left:20px}.topline{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    @media(max-width:600px){body{padding:12px}.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Nexus · État du runtime</h1>
-    <p>Cette page affiche uniquement l'état de disponibilité de l'API. Elle ne lit aucun compte de courtier et ne déclenche aucune opération financière.</p>
-    <p>État : <span class="state" id="status">Vérification…</span></p>
-    <p class="muted" id="details">Aucune donnée de compte ni position de trading n'est collectée par cette page.</p>
-    <p class="muted">Source : <code>/health</code></p>
-  </main>
-  <script>
-    async function refreshHealth() {
-      const status = document.getElementById('status');
-      const details = document.getElementById('details');
-      try {
-        const response = await fetch('/health', { cache: 'no-store' });
-        const data = await response.json();
-        if (!response.ok || data.status !== 'online') throw new Error('API indisponible');
-        status.textContent = 'API en ligne';
-        details.textContent = 'Runtime : ' + data.department + ' · Version : ' + data.version;
-      } catch (_) {
-        status.textContent = 'API indisponible';
-        details.textContent = 'Impossible de confirmer la disponibilité du runtime.';
-      }
+<main>
+  <section class="hero">
+    <div class="topline"><div><p class="muted">NEXUS · CERVEAU CENTRAL</p><h1 id="nexus-name">Nexus</h1><p id="mission">Chargement de l'identité et des capacités…</p></div><div><p>État API : <span id="health" class="status">Vérification…</span></p><p>Capacités : <span id="readiness" class="warn">À vérifier</span></p></div></div>
+  </section>
+  <section class="panel">
+    <h2>Connexion sécurisée</h2>
+    <p class="muted">Le jeton reste dans cette session du navigateur. Il n'est jamais écrit dans la mémoire de conversation. Configure <code>NEXUS_API_BEARER_TOKEN</code> côté serveur.</p>
+    <div class="row"><div><label for="token">Jeton API Bearer</label><input id="token" type="password" autocomplete="current-password" placeholder="Coller le jeton de cette instance"></div><div style="align-self:end"><button id="connect">Vérifier Nexus</button></div></div>
+    <p id="connection-message" class="tiny"></p>
+  </section>
+  <section class="panel">
+    <h2>Qui est Nexus ?</h2><p id="identity" class="muted">Identité non chargée.</p>
+    <div id="metrics" class="grid"></div>
+    <h3>Règles et fonctions</h3><ul id="rules"></ul>
+    <h3>Fournisseurs IA et rôles</h3><div id="providers" class="grid"></div>
+  </section>
+  <section class="panel">
+    <div class="topline"><div><h2>Chat avec le cerveau Nexus</h2><p class="muted">Discussion persistante, avec GPT, Gemini ou Claude via leurs API officielles configurées.</p></div><button id="new-chat" style="max-width:190px;align-self:start">Nouvelle conversation</button></div>
+    <div class="row"><div><label for="provider">Agent</label><select id="provider"><option value="gpt">GPT · raisonnement et cohérence</option><option value="gemini">Gemini · recherche et preuves</option><option value="claude">Claude · architecture et e-commerce</option></select></div><div><label for="domain">Domaine</label><select id="domain"><option>general</option><option>microservices</option><option>ecommerce</option><option>trading</option><option>sports</option><option>ghost</option></select></div></div>
+    <div id="messages" aria-live="polite"></div>
+    <label for="message">Ton message</label><textarea id="message" rows="3" placeholder="Parle directement à Nexus : objectif, problème, décision à prendre…"></textarea>
+    <div class="row"><button id="send">Envoyer</button><p id="chat-status" class="tiny" role="status"></p></div>
+    <p class="tiny">Les réponses IA restent des conseils. Les actions réelles dépendent d'intégrations configurées, de permissions et de preuves. Aucun paiement ou changement de code n'est exécuté par une réponse de chat.</p>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let conversationId = sessionStorage.getItem("nexus_conversation_id") || crypto.randomUUID();
+  sessionStorage.setItem("nexus_conversation_id", conversationId);
+  let currentToken = sessionStorage.getItem("nexus_api_token") || "";
+  $("token").value = currentToken;
+  const headers = () => ({ "Authorization": "Bearer " + currentToken, "Content-Type": "application/json" });
+  async function api(path, options={}) {
+    const response = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) }, cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail?.detail || data.detail || ("HTTP " + response.status));
+    return data;
+  }
+  function addMessage(role, content, provider="Nexus") {
+    const node = document.createElement("div");
+    node.className = "message " + role;
+    const label = document.createElement("strong");
+    label.textContent = (role === "user" ? "Toi" : provider) + "\n";
+    const body = document.createElement("span");
+    body.textContent = content;
+    node.append(label, body);
+    $("messages").append(node);
+    $("messages").scrollTop = $("messages").scrollHeight;
+  }
+  async function loadIdentity() {
+    const [identity, caps, providers] = await Promise.all([
+      api("/api/v1/identity"), api("/api/v1/capabilities"), api("/api/v1/providers")
+    ]);
+    $("nexus-name").textContent = identity.name;
+    $("mission").textContent = identity.mission;
+    $("identity").textContent = identity.identity;
+    $("readiness").textContent = caps.execution.ready_status;
+    $("metrics").replaceChildren();
+    const items = [
+      ["Mémoire persistante", caps.persistent_memory_configured ? "Configurée" : "À configurer"],
+      ["Fournisseurs connectés", caps.provider_count_configured + " / 3"],
+      ["Navigation navigateur", caps.browser.playwright_package_available && caps.browser.allowed_hosts_configured ? "Package + allowlist" : "Partielle / indisponible"],
+      ["Adaptation du code", caps.code_adaptation.mode + " · approbation requise"],
+      ["Transferts financiers", caps.execution.financial_transfers_enabled ? "Activés" : "Désactivés par sécurité"]
+    ];
+    for (const [title,value] of items) {
+      const card=document.createElement("div");card.className="metric";
+      const h=document.createElement("strong");h.textContent=title;
+      const p=document.createElement("p");p.textContent=value;
+      card.append(h,p);$("metrics").append(card);
     }
-    refreshHealth();
-    setInterval(refreshHealth, 15000);
-  </script>
+    $("rules").replaceChildren();
+    for (const rule of identity.operating_rules) { const li=document.createElement("li");li.textContent=rule;$("rules").append(li); }
+    $("providers").replaceChildren();
+    for (const provider of providers.providers) {
+      const card=document.createElement("div");card.className="metric";
+      const h=document.createElement("h3");h.textContent=provider.label;
+      const p=document.createElement("p");p.textContent=provider.role;
+      const s=document.createElement("p");s.className=provider.connector_available?"status":"warn";s.textContent=provider.status;
+      card.append(h,p,s);$("providers").append(card);
+    }
+    $("health").textContent="Authentifié";
+    $("connection-message").textContent="Identité, rôles et état de configuration chargés depuis le runtime.";
+    await loadMemory();
+  }
+  async function loadMemory() {
+    $("messages").replaceChildren();
+    try {
+      const data=await api("/api/v1/memory/conversations/"+encodeURIComponent(conversationId));
+      for (const item of data.messages || []) addMessage(item.role,item.content,item.provider);
+    } catch (err) { $("chat-status").textContent="Mémoire non chargée : "+err.message; }
+  }
+  $("connect").addEventListener("click", async () => {
+    currentToken=$("token").value.trim();
+    sessionStorage.setItem("nexus_api_token",currentToken);
+    try { await loadIdentity(); } catch(err) { $("health").textContent="Accès refusé";$("connection-message").textContent=err.message; }
+  });
+  $("send").addEventListener("click", async () => {
+    const message=$("message").value.trim();
+    if(!message) return;
+    $("send").disabled=true;$("chat-status").textContent="Nexus consulte le fournisseur configuré…";
+    addMessage("user",message,"Nexus");$("message").value="";
+    try {
+      const result=await api("/api/v1/ghost/chat/"+$("provider").value,{method:"POST",body:JSON.stringify({
+        message,conversation_id:conversationId,domain:$("domain").value
+      })});
+      addMessage("assistant",result.response,result.agent+" · "+result.model);
+      $("chat-status").textContent="Réponse reçue · mémoire persistée : "+result.memory_persisted;
+    } catch(err) {
+      addMessage("assistant","Je ne peux pas répondre via ce fournisseur : "+err.message,"Nexus");
+      $("chat-status").textContent="Vérifie la clé API et la configuration du fournisseur.";
+    } finally {$("send").disabled=false;}
+  });
+  $("message").addEventListener("keydown", (event) => {
+    if(event.key==="Enter" && !event.shiftKey){event.preventDefault();$("send").click();}
+  });
+  $("new-chat").addEventListener("click",()=>{conversationId=crypto.randomUUID();sessionStorage.setItem("nexus_conversation_id",conversationId);$("messages").replaceChildren();$("chat-status").textContent="Nouvelle conversation. L'historique précédent reste conservé dans la base.";});
+  fetch("/health",{cache:"no-store"}).then(r=>r.json()).then(d=>{$("health").textContent=d.status==="online"?"API en ligne":"Indisponible";}).catch(()=>$("health").textContent="Indisponible");
+  if(currentToken) loadIdentity().catch(err=>{$("health").textContent="Jeton invalide";$("connection-message").textContent=err.message;});
+</script>
 </body>
 </html>
