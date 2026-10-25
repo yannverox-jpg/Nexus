@@ -3,7 +3,7 @@ import asyncio
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
 from web3_escrow_billing import NexusWeb3EscrowBilling
-from nexus_services.test_fakes import NexusOrchestrator, NexusWeb3WalletManager
+from nexus_services.legacy_runtime_adapter import NexusOrchestrator
 
 class TestNexusServices(unittest.IsolatedAsyncioTestCase):
 
@@ -24,20 +24,15 @@ class TestNexusServices(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(new_svc)
         self.assertEqual(new_svc["cost_per_call_usdc"], 1.0)
 
-    async def test_web3_escrow_billing(self):
-        wallet_mgr = NexusWeb3WalletManager()
-        escrow = NexusWeb3EscrowBilling(wallet_mgr)
+    async def test_escrow_cannot_custody_or_transfer_funds(self):
+        escrow = NexusWeb3EscrowBilling()
+        with self.assertRaises(PermissionError):
+            escrow.create_escrow_lock("escrow_1", "external-client", "external-provider", 10.0)
+        with self.assertRaises(PermissionError):
+            await escrow.release_escrow_payment(
+                "escrow_1", "token-reference", "not-used", {"is_valid": True}
+            )
 
-        lock = escrow.create_escrow_lock("escrow_1", "0xClient", "0xProvider", 10.0)
-        self.assertEqual(lock["status"], "LOCKED")
-
-        res_invalid = await escrow.release_escrow_payment("escrow_1", "0xToken", "enc_key", {"is_valid": False})
-        self.assertEqual(res_invalid["status"], "REJECTED")
-
-        lock2 = escrow.create_escrow_lock("escrow_2", "0xClient", "0xProvider", 20.0)
-        res_valid = await escrow.release_escrow_payment("escrow_2", "0xToken", "enc_key", {"is_valid": True})
-        self.assertEqual(res_valid["status"], "RELEASED")
-        self.assertEqual(res_valid["amount_paid"], 20.0)
 
 if __name__ == "__main__":
     unittest.main()
