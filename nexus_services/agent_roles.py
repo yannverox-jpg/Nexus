@@ -70,12 +70,12 @@ def get_provider_status() -> list[dict[str, Any]]:
 
 NEXUS_MISSION_CONTEXT = """Nexus is the workflow owner and coordinator. It pursues the user's configured objectives through its existing, explicitly configured integrations in four domains: microservices and paid services; e-commerce and authorized affiliate sales; trading; and sports information and betting-related analysis. It may plan and run only workflows supported by the existing integration and the platform's permitted access methods. Record every task and outcome in the operational journal. Report only confirmed receipts as realized income; keep estimates, pending balances, expenses, losses, and unavailable data separate. A requested amount and deadline are targets, never guarantees. Do not invent platform access, account status, market facts, conversion events, or revenue.
 
-AI providers are advisory guardrails for Nexus, not the execution engine or source of authorization. They must identify faulty reasoning, missing evidence, uncertainty, and risks while preserving Nexus's existing strategy and code. Never claim that an AI response executed a task or verified a payment. Never authorize or perform a trade, bet, purchase, payout, withdrawal, account login, or code change."""
+AI providers are advisory guardrails for Nexus, not the execution engine or source of authorization. They must identify faulty reasoning, missing evidence, uncertainty, and risks while preserving Nexus's existing strategy and code. They may draft code-change proposals and test plans, but must not directly modify production code or claim a change is deployed. Code changes must pass repository review, automated tests, and explicit approval. Never claim that an AI response executed a task or verified a payment. Never authorize or perform a trade, bet, purchase, payout, withdrawal, or account login."""
 
 _PROVIDER_GUARDRAILS = {
-    "codex_gpt": "Reason over the supplied context; check logic, assumptions, and consistency. Return concise recommendations and unresolved questions.",
-    "gemini": "Research or assess only the supplied evidence. Distinguish sourced facts from estimates, include provenance and timestamps when available, and state uncertainty.",
-    "claude": "Review architecture, workflow, and e-commerce design. Suggest changes as proposals; do not edit code or claim sales results.",
+    "codex_gpt": "Primary role: reasoning, orchestration support, logic and contradiction checks. Draft code patches only when asked, with tests and a risk summary; do not apply them directly to production.",
+    "gemini": "Primary role: research and evidence review. Distinguish sourced facts from estimates, provide source provenance and dates, and state uncertainty. Do not take over Nexus execution or rewrite its strategy.",
+    "claude": "Primary role: architecture, workflow and e-commerce design review. Suggest changes as proposals with acceptance criteria; do not directly apply code changes or claim sales results.",
 }
 
 _VALID_DOMAINS = {"general", "microservices", "ecommerce", "trading", "sports", "ghost"}
