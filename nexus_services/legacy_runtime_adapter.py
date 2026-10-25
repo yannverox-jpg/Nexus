@@ -11,8 +11,6 @@ import os
 from enum import Enum
 from typing import Any, Dict
 
-from cryptography.fernet import Fernet, InvalidToken
-from web3 import Web3
 
 try:
     from .runtime_contracts import NexusRuntime, OperationalJournal
@@ -70,38 +68,27 @@ class NexusOrchestrator:
 
 
 class NexusWeb3WalletManager:
-    """Real wallet address generation; transfer execution remains fail-closed."""
+    """Deprecated compatibility shim; Nexus does not own or generate wallets.
+
+    Legacy escrow code may still import this name, but no keys, addresses, or
+    balances are created or managed here. External platform accounts and the
+    user's prepaid Visa remain outside Nexus custody.
+    """
 
     def __init__(self, evm_rpc_url: str = ""):
-        self.evm_rpc_url = evm_rpc_url or os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
-        self.web3 = Web3(Web3.HTTPProvider(self.evm_rpc_url, request_kwargs={"timeout": 10}))
-
-    @staticmethod
-    def _fernet() -> Fernet:
-        key = os.getenv("NEXUS_WALLET_ENCRYPTION_KEY", "").strip()
-        if not key:
-            raise RuntimeError("NEXUS_WALLET_ENCRYPTION_KEY is required to encrypt wallet keys")
-        try:
-            return Fernet(key.encode("ascii"))
-        except (ValueError, TypeError) as exc:
-            raise RuntimeError("NEXUS_WALLET_ENCRYPTION_KEY must be a valid Fernet key") from exc
+        self.evm_rpc_url = ""
 
     def generate_encrypted_keypair(self) -> Dict[str, str]:
-        account = self.web3.eth.account.create()
-        encrypted = self._fernet().encrypt(bytes.fromhex(account.key.hex().removeprefix("0x")))
-        return {
-            "address": account.address,
-            "encrypted_private_key": encrypted.decode("ascii"),
-        }
+        raise RuntimeError(
+            "Nexus does not own a wallet. Register external platform accounts instead."
+        )
 
     async def transfer_stablecoin(
         self, encrypted_private_key: str, to_address: str,
         token_contract_address: str, amount: float,
     ) -> Dict[str, Any]:
-        # Do not mimic a transfer or broadcast a financial transaction without
-        # transaction-scoped human approval, limits, idempotency and receipt checks.
         raise PermissionError(
-            "Real transfers are disabled until transaction approval and on-chain receipt verification are implemented"
+            "Nexus does not custody funds or execute wallet transfers; use the external platform payout flow."
         )
 
 
