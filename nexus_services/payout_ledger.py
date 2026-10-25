@@ -86,6 +86,20 @@ class PayoutLedger:
             if "setup_reference" not in destination_columns:
                 conn.execute("ALTER TABLE payout_destinations ADD COLUMN setup_reference TEXT")
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS platform_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    account_reference TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    balance_minor INTEGER NOT NULL CHECK(balance_minor >= 0),
+                    evidence_reference TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(platform, account_reference, currency)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS revenue_entries (
                     entry_id TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
@@ -114,8 +128,66 @@ class PayoutLedger:
                 )
             """)
 
+    def register_platform_account(
+        self, *, platform: str, account_reference: str, currency: str,
+        balance: Any, evidence_reference: str, observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an external platform account snapshot; Nexus never owns its funds."""
+        platform = platform.strip()
+        account_reference = account_reference.strip()
+        evidence_reference = evidence_reference.strip()
+        for value in (platform, account_reference, evidence_reference):
+            _assert_no_card_secrets(value)
+        if not platform or len(platform) > 100:
+            raise ValueError("Le nom de la plateforme est obligatoire")
+        if not account_reference or len(account_reference) > 200:
+            raise ValueError("Une référence de compte externe est requise")
+        if not evidence_reference or len(evidence_reference) > 200:
+            raise ValueError("Une preuve externe vérifiable est requise")
+        amount = Decimal(str(balance))
+        if not amount.is_finite() or amount < 0 or amount.as_tuple().exponent < -2:
+            raise ValueError("Le solde doit être positif ou nul et limité à deux décimales")
+        minor = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        currency = _currency(currency)
+        now = _now()
+        observed = observed_at or now
+        account_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO platform_accounts
+                (account_id,platform,account_reference,currency,balance_minor,evidence_reference,observed_at,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(platform,account_reference,currency) DO UPDATE SET
+                    balance_minor=excluded.balance_minor,
+                    evidence_reference=excluded.evidence_reference,
+                    observed_at=excluded.observed_at,
+                    updated_at=excluded.updated_at""",
+                (account_id, platform, account_reference, currency, minor,
+                 evidence_reference, observed, now, now),
+            )
+            row = conn.execute(
+                "SELECT * FROM platform_accounts WHERE platform=? AND account_reference=? AND currency=?",
+                (platform, account_reference, currency),
+            ).fetchone()
+        return self._platform_account_view(dict(row))
+
+    @staticmethod
+    def _platform_account_view(row: dict[str, Any]) -> dict[str, Any]:
+        result = dict(row)
+        result["balance"] = _display_amount(result.pop("balance_minor"))
+        result["ownership"] = "EXTERNAL_PLATFORM_ACCOUNT"
+        return result
+
+    def list_platform_accounts(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM platform_accounts ORDER BY updated_at DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        return [self._platform_account_view(dict(row)) for row in rows]
+
     def _list(self, table: str, limit: int = 200) -> list[dict[str, Any]]:
-        allowed = {"payout_destinations", "revenue_entries", "payout_orders"}
+        allowed = {"payout_destinations", "platform_accounts", "revenue_entries", "payout_orders"}
         if table not in allowed:
             raise ValueError("Table inconnue")
         with self._connect() as conn:
@@ -135,8 +207,8 @@ class PayoutLedger:
         destination_type = destination_type.strip().upper()
         if not provider or not label or len(provider) > 80 or len(label) > 100:
             raise ValueError("Le fournisseur et le libellé sont obligatoires")
-        if destination_type not in {"CARD", "BANK", "WALLET"}:
-            raise ValueError("Type de destination non pris en charge")
+        if destination_type != "CARD":
+            raise ValueError("Seule la carte Visa prépayée externe est configurée comme destination de retrait")
         if destination_type == "CARD" and not re.fullmatch(r"\d{4}", last4 or ""):
             raise ValueError("Pour une carte, seuls les quatre derniers chiffres sont acceptés")
         if last4 is not None and not re.fullmatch(r"\d{4}", last4):
@@ -337,6 +409,15 @@ class PayoutLedger:
             self._payout_view(item, destination_map.get(item["destination_id"]))
             for item in orders
         ]
+        platform_accounts = self.list_platform_accounts()
+        platform_currencies = sorted({item["currency"] for item in platform_accounts})
+        consolidated_platform_balances = {
+            currency: _display_amount(sum(
+                int(Decimal(str(item["balance"])) * 100)
+                for item in platform_accounts if item["currency"] == currency
+            ))
+            for currency in platform_currencies
+        }
         currencies = sorted({item["currency"] for item in revenues})
         balances = {}
         for currency in currencies:
@@ -363,12 +444,21 @@ class PayoutLedger:
                 "payouts_marked_paid": _display_amount(received),
             }
         return {
+            "architecture": {
+                "nexus_owned_wallet": False,
+                "funds_custodied_by_nexus": False,
+                "platform_account_balances_are_external": True,
+                "payout_destination": "EXTERNAL_PREPAID_VISA",
+                "platform_balances_are_snapshots_not_nexus_assets": True,
+            },
             "capabilities": {
                 "automatic_transfer_enabled": False,
                 "card_pan_or_cvv_stored": False,
                 "provider_integration_required": True,
                 "income_requires_evidence_to_be_payable": True,
             },
+            "consolidated_platform_balances": consolidated_platform_balances,
+            "platform_accounts": platform_accounts,
             "balances": balances,
             "destinations": destinations,
             "revenues": revenues,
