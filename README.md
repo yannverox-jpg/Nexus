@@ -17,9 +17,11 @@ The operational journal, conversation memory, payout ledger, and task repositori
 
 SQLite is durable embedded storage, not a horizontally scalable shared database. It is appropriate for a single-node deployment with moderate write concurrency. For multiple application instances or high sustained write volume, implement and configure a PostgreSQL repository backend before scaling out. A SQLite file checked into Git would not be a runtime database and is intentionally not included.
 
-## Financial safety
+## Financial architecture
 
-The ledger tracks reported revenue and payout status; it does not itself move money. Stablecoin transfers and treasury withdrawals remain disabled until transaction-scoped authorization, approval, idempotency, audit evidence, and real provider/on-chain receipt verification are implemented. A queued task or provider request is not proof of successful execution.
+Nexus does **not** own a wallet, hold user funds, or generate blockchain private keys. Platform accounts remain separate and authoritative at their respective providers. Nexus records timestamped, evidence-linked balance snapshots in a consolidated view; those snapshots are external platform balances, not assets held by Nexus.
+
+The payout destination is the user's external prepaid Visa card. Nexus stores only a masked label and, when supplied, the last four digits. It never stores the full card number, CVV/CVC, or issuer credentials. The card is a destination, not a Nexus wallet. Actual payouts require the relevant platform's supported payout flow and external confirmation; recording a payout request is not proof that funds arrived. The ledger does not itself move money, and stablecoin transfers/treasury withdrawals remain disabled.
 
 ## Validation
 
