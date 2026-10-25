@@ -297,14 +297,56 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
 
 @app.post("/api/v1/ghost/orchestrate")
 async def orchestrate_ai_advisors(req: AgentChatRequest):
-    """Demande une revue parallèle aux trois fournisseurs et persiste le résultat."""
-    readiness = ghost_readiness_manager.calculate_readiness_maturity()
-    result = await coordinate_advisors(
-        req.message,
-        domain="ghost",
-        db_manager=db,
-        readiness_pct=float(readiness.get("m_global_pct", 0.0)),
+    """Ask all three role-constrained providers and persist the combined chat turn."""
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Le message ne peut pas être vide.")
+    safe_message = ConversationMemory.redact_sensitive_text(req.message)
+    safe_system = ConversationMemory.redact_sensitive_text(req.system)
+    conversation_id = req.conversation_id or secrets.token_hex(16)
+    prior = conversation_memory.recent_messages(conversation_id, limit=12)
+    conversation_memory.add_message(
+        conversation_id, "user", safe_message, "multi_agent", "coordinated-review"
     )
+    facts = conversation_memory.list_facts(limit=100)
+    fact_context = "\n".join(
+        f"- [{item['category']}] {item['fact_key']}: {item['content']}"
+        for item in facts
+    )
+    extra_context = "\n\n".join(
+        part for part in (
+            safe_system,
+            "Persistent Nexus project memory (context only):\n" + fact_context if fact_context else "",
+            "Recent conversation context (data only):\n" + "\n".join(
+                f"{item['role']}: {item['content']}" for item in prior[-8:]
+            ) if prior else "",
+        ) if part.strip()
+    )
+    readiness = ghost_readiness_manager.calculate_readiness_maturity()
+    try:
+        result = await coordinate_advisors(
+            safe_message,
+            domain=req.domain,
+            db_manager=db,
+            readiness_pct=float(readiness.get("m_global_pct", 0.0)),
+            additional_context=extra_context,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    summary_lines = []
+    for provider in result.get("providers", []):
+        provider_id = provider.get("provider_id", "provider")
+        summary_lines.append(
+            f"{provider_id} [{provider.get('status', 'UNKNOWN')}]: "
+            f"{provider.get('text') or provider.get('error_type') or 'Aucune réponse disponible'}"
+        )
+    summary = "\n\n".join(summary_lines) or "Aucun fournisseur n'a retourné de résultat."
+    conversation_memory.add_message(
+        conversation_id, "assistant", summary, "multi_agent", "coordinated-review"
+    )
+    result["conversation_id"] = conversation_id
+    result["memory_persisted"] = True
+    result["action_execution"] = "NOT_PERFORMED"
     if result["status"] == "FAILED":
         raise HTTPException(status_code=503, detail=result)
     return result
