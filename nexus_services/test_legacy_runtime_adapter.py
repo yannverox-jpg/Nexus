@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 from nexus_services.legacy_runtime_adapter import (
     NexusOrchestrator,
-    NexusWeb3WalletManager,
     TaskPriority,
 )
 from nexus_services.runtime_contracts import TaskStatus
@@ -40,15 +39,10 @@ class LegacyRuntimeAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotEqual(task.status, TaskStatus.EXECUTED)
                 self.assertNotEqual(task.status, TaskStatus.VERIFIED)
 
-    async def test_wallet_adapter_never_fabricates_transfer_success(self):
-        wallet = NexusWeb3WalletManager(evm_rpc_url="http://127.0.0.1:1")
-        with self.assertRaises(PermissionError):
-            await wallet.transfer_stablecoin(
-                encrypted_private_key="not-used",
-                to_address="0x0000000000000000000000000000000000000001",
-                token_contract_address="0x0000000000000000000000000000000000000002",
-                amount=1.0,
-            )
+    def test_proprietary_wallet_manager_is_absent(self):
+        import nexus_services.legacy_runtime_adapter as adapter
+        self.assertFalse(hasattr(adapter, "NexusWeb3WalletManager"))
+
 
 
 if __name__ == "__main__":
