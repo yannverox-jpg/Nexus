@@ -123,7 +123,12 @@ class CodeChangeManager:
         })
 
         file_url = f"{api}/contents/{safe_path}?ref={proposal_branch}"
-        existing = self._request("GET", file_url, token)
+        try:
+            existing = self._request("GET", file_url, token)
+        except RuntimeError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+            existing = {}
         file_sha = existing.get("sha")
         payload: dict[str, Any] = {
             "message": f"Nexus proposal: {title}",
