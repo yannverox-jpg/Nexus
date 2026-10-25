@@ -80,7 +80,6 @@ class CodeChangeManager:
                 or path.startswith(".git/") or path in {".env", ".env.example", "requirements.txt", "Procfile"}
                 or any(part.casefold() in {".env", ".env.example", "secrets", "credentials"} for part in segments)):
             raise ValueError("Chemin interdit pour une proposition de code")
-            raise ValueError("Chemin interdit pour une proposition de code")
         if not (path.startswith("nexus_services/") or path.startswith("docs/") or path in {"README.md"}):
             raise ValueError("Les propositions sont limitées à nexus_services/, docs/ et README.md")
         if path.endswith((".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx")):
