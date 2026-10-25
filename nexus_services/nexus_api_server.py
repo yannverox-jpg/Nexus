@@ -172,8 +172,7 @@ def health_check():
     return {
         "status": "online",
         "department": "NEXUS_CANONICAL_RUNTIME",
-        "version": "3.5",
-        "connected": w3.is_connected()
+        "version": "3.5"
     }
 
 # --- ENDPOINTS MÉMOIRE PERSISTANTE (GHOST DB) & READINESS ---
