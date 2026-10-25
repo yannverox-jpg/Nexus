@@ -34,12 +34,54 @@ class BrowserAgent:
             for domain in (allowed_domains or configured_domains)
             if domain.strip()
         )
+        self.proxy_config = self._load_proxy_config()
+        self.locale = os.getenv("NEXUS_BROWSER_LOCALE", "fr-FR").strip() or "fr-FR"
+        self.timezone_id = os.getenv("NEXUS_BROWSER_TIMEZONE", "Europe/Amsterdam").strip() or "Europe/Amsterdam"
+        self.geolocation = self._load_geolocation()
+        self.challenge_detected = False
+        self.challenge_reason: Optional[str] = None
         self.playwright = None
         self.browser = None
         self.context = None
         self.page = None
         self.execution_mode = "UNAVAILABLE"
         self._journal_context = None
+
+    @staticmethod
+    def _load_proxy_config() -> Optional[Dict[str, str]]:
+        """Load one explicitly configured proxy; never rotate or evade controls."""
+        raw = os.getenv("NEXUS_BROWSER_PROXY", "").strip()
+        if not raw:
+            return None
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https", "socks5"} or not parsed.hostname:
+            raise ValueError("NEXUS_BROWSER_PROXY must be an HTTP(S) or SOCKS5 proxy URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Put proxy credentials in dedicated environment variables, not the proxy URL")
+        config: Dict[str, str] = {"server": raw}
+        username = os.getenv("NEXUS_BROWSER_PROXY_USERNAME", "").strip()
+        password = os.getenv("NEXUS_BROWSER_PROXY_PASSWORD", "")
+        if bool(username) != bool(password):
+            raise ValueError("Both proxy username and password must be configured together")
+        if username:
+            config["username"] = username
+            config["password"] = password
+        return config
+
+    @staticmethod
+    def _load_geolocation() -> Optional[Dict[str, float]]:
+        """Geolocation emulation is opt-in and requires explicit coordinates."""
+        enabled = os.getenv("NEXUS_BROWSER_ALLOW_GEOLOCATION", "").strip().casefold()
+        if enabled not in {"1", "true", "yes"}:
+            return None
+        try:
+            latitude = float(os.environ["NEXUS_BROWSER_LATITUDE"])
+            longitude = float(os.environ["NEXUS_BROWSER_LONGITUDE"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Geolocation requires NEXUS_BROWSER_LATITUDE and NEXUS_BROWSER_LONGITUDE") from exc
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValueError("Geolocation coordinates are out of range")
+        return {"latitude": latitude, "longitude": longitude}
 
     def bind_journal(
         self, journal: Any, task_id: str, attempt_id: str,
@@ -127,12 +169,22 @@ class BrowserAgent:
         )
         engine = getattr(self.playwright, self.browser_name)
         self.browser = await self._journaled_operation(
-            "launch_browser", self.browser_name, {"headless": self.headless},
-            lambda: engine.launch(headless=self.headless),
+            "launch_browser", self.browser_name,
+            {"headless": self.headless, "proxy_configured": bool(self.proxy_config)},
+            lambda: engine.launch(headless=self.headless, proxy=self.proxy_config),
         )
+        context_options: Dict[str, Any] = {
+            "locale": self.locale,
+            "timezone_id": self.timezone_id,
+        }
+        if self.geolocation is not None:
+            context_options["geolocation"] = self.geolocation
+            context_options["permissions"] = ["geolocation"]
         self.context = await self._journaled_operation(
-            "create_context", self.browser_name, {},
-            lambda: self.browser.new_context(),
+            "create_context", self.browser_name,
+            {"locale": self.locale, "timezone_id": self.timezone_id,
+             "geolocation_enabled": self.geolocation is not None},
+            lambda: self.browser.new_context(**context_options),
         )
         self.page = await self._journaled_operation(
             "create_page", "browser_context", {},
@@ -150,16 +202,49 @@ class BrowserAgent:
         if not any(host == domain or host.endswith("." + domain) for domain in self.allowed_domains):
             raise PermissionError(f"The host {host} is not in NEXUS_BROWSER_ALLOWED_HOSTS")
 
+    async def detect_challenge(self) -> Dict[str, Any]:
+        """Detect common CAPTCHA/challenge signals and pause; never solve them."""
+        if not self.page:
+            return {"detected": False, "reason": None}
+        selectors = (
+            'iframe[src*="captcha" i]', 'iframe[title*="challenge" i]',
+            '[data-sitekey]', '[id*="captcha" i]', 'textarea[name*="captcha" i]',
+            '#challenge-running', '#cf-challenge-running',
+        )
+        for selector in selectors:
+            try:
+                if await self.page.locator(selector).count():
+                    self.challenge_detected = True
+                    self.challenge_reason = "CAPTCHA_OR_ANTI_BOT_CHALLENGE"
+                    return {"detected": True, "reason": self.challenge_reason}
+            except Exception:
+                continue
+        try:
+            body = (await self.page.locator("body").inner_text(timeout=1500)).casefold()
+        except Exception:
+            body = ""
+        phrases = (
+            "verify you are human", "checking your browser", "complete the captcha",
+            "unusual traffic", "security challenge", "verify that you are human",
+        )
+        if any(phrase in body for phrase in phrases):
+            self.challenge_detected = True
+            self.challenge_reason = "CAPTCHA_OR_ANTI_BOT_CHALLENGE"
+        return {"detected": self.challenge_detected, "reason": self.challenge_reason}
+
     async def navigate(self, url: str) -> Optional[str]:
         self._assert_allowed_url(url)
         if not self.page:
             self.execution_mode = "UNAVAILABLE"
             raise RuntimeError("Browser is not initialized")
+        self.challenge_detected = False
+        self.challenge_reason = None
         await self._journaled_operation(
             "navigate", url, {"wait_until": "page_default"},
             lambda: self.page.goto(url),
             response=lambda _: {"url": self.page.url},
         )
+        await self.detect_challenge()
         return self.page.url
 
     async def capture_screen_for_vision(self) -> Optional[bytes]:
@@ -194,6 +279,8 @@ class BrowserAgent:
         """Fill one uniquely identified non-sensitive text field; never submit it."""
         if not self.page:
             raise RuntimeError("Browser is not initialized")
+        if self.challenge_detected:
+            raise PermissionError("CAPTCHA or anti-bot challenge detected; automation paused for authorized human intervention")
         if not isinstance(selector, str) or not selector.strip() or len(selector) > 300:
             raise ValueError("A valid CSS selector is required")
         if not isinstance(value, str) or len(value) > 2000:
