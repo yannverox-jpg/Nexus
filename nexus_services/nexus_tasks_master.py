@@ -1,59 +1,33 @@
+"""Legacy CLI entrypoint for external-platform reconciliation only.
+
+This script does not create a Nexus wallet, custody funds, or execute payouts.
+"""
 import asyncio
-import json
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from legacy_runtime_adapter import (
-    NexusOrchestrator, NexusWeb3WalletManager, NexusMicroserviceBridge
-)
-
+from legacy_runtime_adapter import NexusOrchestrator
 from auto_task_generator import NexusAutoTaskEngine
-from service_marketplace import ServiceCatalogRegistry
-from web3_escrow_billing import NexusWeb3EscrowBilling
+
 
 async def main():
-    print("=" * 65)
-    print("🚀 NEXUS DEPARTMENT - SYSTÈME DE TÂCHES AUTONOME COMPLET")
-    print("=" * 65)
-
-    config_path = os.path.join(os.path.dirname(__file__), "config_nexus.json")
-    with open(config_path, "r") as f:
-        config = json.load(f)
-
-    # Core
     orchestrator = NexusOrchestrator(max_agents=10)
-    wallet_mgr = NexusWeb3WalletManager(evm_rpc_url=config["web3_wallet"]["evm_rpc_url"])
-    bridge = NexusMicroserviceBridge()
+    orchestrator.spawn_agent("Worker-1", "PLATFORM_ACCOUNT_RECONCILIATION")
+    orchestrator.spawn_agent("Worker-2", "PAYOUT_STATUS_RECONCILIATION")
 
-    # Nouveaux Modules (1, 2, 3)
     auto_engine = NexusAutoTaskEngine(orchestrator)
-    catalog = ServiceCatalogRegistry()
-    escrow = NexusWeb3EscrowBilling(wallet_mgr)
-
-    # Enregistrement des agents
-    orchestrator.spawn_agent("Worker-1", "API_CONTRACT")
-    orchestrator.spawn_agent("Worker-2", "WEB3_EXECUTION")
-
-    # Démarrage du dispatcher de tâches
-    asyncio.create_task(orchestrator.start_dispatcher())
-
-    # Exemple d'objectif soumis à Nexus
-    goal = "Traiter le contrat de données externes et effectuer le règlement de 5 USDC"
-    provider_address = os.getenv("NEXUS_PROVIDER_ADDRESS", "").strip()
-    if not provider_address:
-        raise RuntimeError("NEXUS_PROVIDER_ADDRESS must be configured; refusing to use a hard-coded wallet address.")
-    ctx = {
-        "budget_usdc": 5.0,
-        "provider_address": provider_address
+    goal = (
+        "Consolider les soldes observés des comptes des plateformes externes, "
+        "puis préparer le rapprochement vers la carte Visa prépayée externe. "
+        "Ne jamais déplacer, détenir ou simuler le transfert de fonds."
+    )
+    context = {
+        "financial_model": "EXTERNAL_PLATFORM_ACCOUNTS",
+        "payout_destination": "EXTERNAL_PREPAID_VISA",
+        "execution_mode": "RECONCILIATION_ONLY",
     }
+    task_ids = await auto_engine.decompose_and_enqueue_goal(goal, context)
+    print(f"{len(task_ids)} tâches de rapprochement externe mises en file; aucun paiement exécuté.")
+    orchestrator.stop()
 
-    # Génération et enfilement autonome
-    task_ids = await auto_engine.decompose_and_enqueue_goal(goal, ctx)
-    print(f"\n✅ {len(task_ids)} tâches autonomes injectées dans la file d'attente.")
-
-    await bridge.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
