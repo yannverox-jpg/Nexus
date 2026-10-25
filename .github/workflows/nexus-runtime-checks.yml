@@ -31,6 +31,7 @@ jobs:
           nexus_services.test_legacy_runtime_adapter
           nexus_services.test_nexus_api_server
           nexus_services.test_nexus_identity
+          nexus_services.test_nexus_safe_executors
           nexus_services.test_code_change_manager
           nexus_services.test_stablecoin_liquidation
           nexus_services.test_memory_store
