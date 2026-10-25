@@ -27,7 +27,7 @@ class NexusAutoTaskEngine:
             raise ValueError("L'objectif Nexus ne peut pas être vide")
         # This is deterministic planning, not a claim that an LLM generated a plan.
         # A stable mission ID lets the API reconcile every task belonging to this goal.
-        goal_id = str(uuid.uuid4())
+        goal_id = str(context.get("goal_id") or uuid.uuid4())
         safe_context = {
             key: context[key]
             for key in ("budget_usdc", "target_amount", "target_currency", "deadline_at")
