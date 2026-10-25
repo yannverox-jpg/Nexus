@@ -344,17 +344,21 @@ async def navigate_browser(request: BrowserNavigationRequest):
         if _browser_agent.page is None:
             await _browser_agent.initialize()
         await _browser_agent.navigate(request.url)
+        challenge = await _browser_agent.detect_challenge()
         title = await _browser_agent.page.title()
-        body = await _browser_agent.page.locator("body").inner_text(timeout=5000)
+        body = "" if challenge["detected"] else await _browser_agent.page.locator("body").inner_text(timeout=5000)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Browser navigation unavailable: {type(exc).__name__}") from exc
     return {
-        "status": "OBSERVED",
+        "status": "HUMAN_INTERVENTION_REQUIRED" if challenge["detected"] else "OBSERVED",
         "url": _browser_agent.page.url,
         "title": title[:300],
         "text_excerpt": body[:2000],
+        "challenge": challenge,
+        "proxy_configured": bool(_browser_agent.proxy_config),
+        "geolocation_emulation_enabled": _browser_agent.geolocation is not None,
         "content_persisted": False,
         "actions_enabled": False,
     }
