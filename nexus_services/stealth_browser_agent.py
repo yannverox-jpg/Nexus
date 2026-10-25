@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import re
+import html
+import httpx
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urljoin, urlparse
@@ -231,6 +234,83 @@ class BrowserAgent:
             self.challenge_detected = True
             self.challenge_reason = "CAPTCHA_OR_ANTI_BOT_CHALLENGE"
         return {"detected": self.challenge_detected, "reason": self.challenge_reason}
+
+    async def probe_http(self, url: str) -> Optional[Dict[str, Any]]:
+        """Try a bounded, read-only HTTP request before launching a browser.
+
+        Returns an observation for ordinary static HTML, None when a browser
+        is needed, and a human-intervention result when an access challenge is
+        detected. Redirects and non-HTML responses are delegated to Playwright.
+        The HTTP fast path is disabled when a proxy is configured so transport
+        settings are not silently changed between modes.
+        """
+        self._assert_allowed_url(url)
+        if self.proxy_config:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(8.0, connect=4.0),
+                follow_redirects=False,
+                headers={"User-Agent": "NexusBrowser/1.0"},
+            ) as client:
+                response = await client.get(url)
+        except (httpx.HTTPError, TimeoutError):
+            return None
+
+        content_type = response.headers.get("content-type", "").casefold()
+        body = response.text[:1_000_000]
+        lower_body = body.casefold()
+        challenge_phrases = (
+            "verify you are human", "checking your browser",
+            "complete the captcha", "unusual traffic", "security challenge",
+            "verify that you are human", "cf-chl-", "challenge-platform",
+        )
+        if response.status_code in {403, 429} or any(
+            phrase in lower_body for phrase in challenge_phrases
+        ):
+            self.challenge_detected = True
+            self.challenge_reason = "HTTP_ACCESS_CHALLENGE"
+            return {
+                "status": "HUMAN_INTERVENTION_REQUIRED",
+                "url": str(response.url),
+                "title": "",
+                "text_excerpt": "",
+                "challenge": {"detected": True, "reason": self.challenge_reason},
+                "execution_mode": "HTTP",
+                "http_status": response.status_code,
+                "content_persisted": False,
+                "actions_enabled": False,
+            }
+
+        if response.status_code != 200 or "html" not in content_type:
+            return None
+
+        title_match = re.search(r"<title[^>]*>(.*?)</title\s*>", body, re.I | re.S)
+        title = html.unescape(re.sub(r"<[^>]+>", "", title_match.group(1))).strip() if title_match else ""
+        visible = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1\s*>", " ", body)
+        visible = re.sub(r"(?s)<[^>]+>", " ", visible)
+        visible = re.sub(r"\s+", " ", html.unescape(visible)).strip()
+
+        # App shells with little readable text usually need JavaScript rendering.
+        script_count = len(re.findall(r"<script\b", body, re.I))
+        if script_count >= 3 and len(visible) < 120:
+            return None
+
+        self.execution_mode = "HTTP_READ_ONLY"
+        return {
+            "status": "OBSERVED",
+            "url": str(response.url),
+            "title": title[:300],
+            "text_excerpt": visible[:2000],
+            "challenge": {"detected": False, "reason": None},
+            "execution_mode": "HTTP_READ_ONLY",
+            "http_status": response.status_code,
+            "proxy_configured": False,
+            "geolocation_emulation_enabled": False,
+            "content_persisted": False,
+            "actions_enabled": False,
+        }
 
     async def navigate(self, url: str) -> Optional[str]:
         self._assert_allowed_url(url)
