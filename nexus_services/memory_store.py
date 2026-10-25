@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
 from contextlib import contextmanager
+from .sqlite_storage import connect_sqlite
 
 
 def configured_database_path() -> str:
@@ -47,15 +48,7 @@ class ConversationMemory:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        path = self._memory_uri or self.db_path
-        conn = sqlite3.connect(path, timeout=self.timeout,
-                               uri=path.startswith("file:"), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-        if not self._memory_uri:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = FULL")
-        return conn
+        return connect_sqlite(self._memory_uri or self.db_path, timeout=self.timeout)
 
     @contextmanager
     def _connection(self):
