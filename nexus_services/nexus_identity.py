@@ -60,16 +60,23 @@ def get_capability_status() -> dict[str, Any]:
     """Return observed configuration, not aspirational readiness percentages."""
     database_path = os.getenv("NEXUS_OPERATIONAL_DB_PATH", "nexus_operational.db")
     path = Path(database_path).expanduser() if not database_path.startswith("file:") else None
-    persistent_memory = database_path != ":memory:" and not (
-        path is not None and str(path) == ":memory:"
+    persistent_memory = (
+        database_path != ":memory:"
+        and "mode=memory" not in database_path.casefold()
+        and not (path is not None and str(path) == ":memory:")
     )
     providers = get_connector_status()
     configured = [item["provider_id"] for item in providers if item["connector_available"]]
     try:
         from .stealth_browser_agent import async_playwright
-        browser_package = async_playwright is not None
+    except ImportError:
+        try:
+            from stealth_browser_agent import async_playwright
+        except Exception:
+            async_playwright = None
     except Exception:
-        browser_package = False
+        async_playwright = None
+    browser_package = async_playwright is not None
 
     code_status = code_change_status()
     code_mode = code_status["mode"]
