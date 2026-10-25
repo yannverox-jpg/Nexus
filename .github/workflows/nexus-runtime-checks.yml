@@ -31,4 +31,5 @@ jobs:
           nexus_services.test_legacy_runtime_adapter
           nexus_services.test_memory_store
           nexus_services.test_sqlite_storage
+          nexus_services.test_financial_architecture
           nexus_services.test_broker_dashboard
