@@ -149,10 +149,10 @@ class CodeChangeManager:
             "head": proposal_branch,
             "base": base,
             "body": (
-                "## Nexus code-change proposal\\n\\n"
-                f"{summary}\\n\\n"
-                f"**File:** `{safe_path}`\\n"
-                "**Execution:** this PR does not modify the running process.\\n"
+                "## Nexus code-change proposal\n\n"
+                f"{summary}\n\n"
+                f"**File:** `{safe_path}`\n"
+                "**Execution:** this PR does not modify the running process.\n"
                 "**Safety:** wait for CI and human review; Nexus does not merge its own PR."
             ),
             "draft": True,
