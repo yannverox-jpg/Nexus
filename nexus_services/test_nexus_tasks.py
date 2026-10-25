@@ -10,6 +10,12 @@ class TestNexusServices(unittest.IsolatedAsyncioTestCase):
     async def test_auto_task_generator(self):
         orchestrator = NexusOrchestrator()
         engine = NexusAutoTaskEngine(orchestrator)
+        executor_names = {executor.name for executor in orchestrator.runtime.executors}
+        self.assertTrue({
+            "CAPABILITY_ASSESSMENT",
+            "WORKFLOW_PLAN_REVIEW",
+            "PLATFORM_ACCOUNT_RECONCILIATION",
+        }.issubset(executor_names))
         task_ids = await engine.decompose_and_enqueue_goal("Test Goal", {"budget_usdc": 10.0, "provider_address": "0x123"})
         self.assertEqual(len(task_ids), 3)
         tasks = orchestrator.runtime.operational_journal.list_tasks(limit=10)
