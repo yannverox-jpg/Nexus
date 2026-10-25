@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
@@ -13,12 +14,13 @@ from .connection_manager import ConnectionManager
 from .platform_catalog import get_platform_catalog
 from .stealth_browser_agent import BrowserAgent, async_playwright
 from .operational_dashboard import dashboard_overview, mission_detail, task_detail
-from .memory_store import configured_database_path
+from .memory_store import ConversationMemory, configured_database_path
 from .payout_ledger import PayoutLedger
 from .runtime_contracts import OperationalJournal
 
 database_path = configured_database_path()
 journal = OperationalJournal(database_path)
+conversation_memory = ConversationMemory(database_path)
 payout_ledger = PayoutLedger(database_path)
 connection_manager = ConnectionManager(database_path)
 _browser_agent: BrowserAgent | None = None
@@ -42,6 +44,7 @@ class AdvisoryChatRequest(BaseModel):
     message: str
     system: str = ""
     domain: str = "general"
+    conversation_id: str | None = None
 
 
 class StrictRequest(BaseModel):
@@ -235,24 +238,55 @@ def disconnect_provider(provider_id: str):
 
 @app.post("/api/v1/advisory/{agent_name}")
 def advisory_chat(agent_name: str, request: AdvisoryChatRequest):
-    """Ask a configured provider for advice; never dispatches an external action."""
+    """Ask a configured provider; persist redacted conversation history, never actions."""
     provider_id = {"gpt": "codex_gpt", "codex": "codex_gpt", "gemini": "gemini", "claude": "claude"}.get(agent_name.casefold())
     if provider_id is None:
         raise HTTPException(status_code=400, detail="Agent non reconnu")
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="message must not be empty")
     if not CONNECTORS[provider_id].status()["connector_available"]:
         raise HTTPException(status_code=503, detail=f"{provider_id} provider is not configured")
     try:
         system_context = build_agent_system_context(provider_id, request.domain, request.system)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    conversation_id = request.conversation_id or uuid.uuid4().hex
+    prior_messages = conversation_memory.recent_messages(conversation_id, limit=12)
+    conversation_memory.add_message(
+        conversation_id, "user", request.message, provider_id,
+        os.getenv(CONNECTORS[provider_id].model_env, CONNECTORS[provider_id].default_model),
+    )
+    history = "\\n".join(
+        f"{item['role']}: {item['content']}" for item in prior_messages[-10:]
+    )
+    prompt = (
+        f"Prior conversation (context only):\\n{history}\\n\\nCurrent user message:\\n{request.message}"
+        if history else request.message
+    )
     try:
-        return CONNECTORS[provider_id].complete(
-            request.message,
+        result = CONNECTORS[provider_id].complete(
+            prompt,
             system=system_context,
             google_search=provider_id == "gemini" and request.domain == "sports",
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=f"{provider_id} provider request failed") from exc
+
+    conversation_memory.add_message(
+        conversation_id, "assistant", result["text"], provider_id, result["model"]
+    )
+    return {**result, "conversation_id": conversation_id, "memory_persisted": True}
+
+
+@app.get("/api/v1/memory/conversations/{conversation_id}")
+def get_conversation_memory(conversation_id: str, limit: int = 40):
+    """Return redacted persisted messages for a single conversation."""
+    return {
+        "conversation_id": conversation_id,
+        "messages": conversation_memory.recent_messages(conversation_id, limit=limit),
+        "storage": "configured_operational_database",
+    }
 
 
 @app.post("/api/v1/browser/navigate")
