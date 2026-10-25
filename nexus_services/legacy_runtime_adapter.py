@@ -39,6 +39,24 @@ class NexusOrchestrator:
             operational_journal=OperationalJournal(db_path),
             name="NexusCanonicalRuntime",
         )
+        try:
+            from .nexus_safe_executors import (
+                CapabilityAssessmentExecutor,
+                WorkflowPlanReviewExecutor,
+                PlatformAccountReconciliationExecutor,
+            )
+        except ImportError:
+            from nexus_safe_executors import (
+                CapabilityAssessmentExecutor,
+                WorkflowPlanReviewExecutor,
+                PlatformAccountReconciliationExecutor,
+            )
+        for executor in (
+            CapabilityAssessmentExecutor(),
+            WorkflowPlanReviewExecutor(),
+            PlatformAccountReconciliationExecutor(),
+        ):
+            self.runtime.register_executor(executor)
         self.runtime.boot()
 
     def spawn_agent(self, agent_id: str, capability: str) -> None:
