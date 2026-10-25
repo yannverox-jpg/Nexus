@@ -131,7 +131,8 @@ def health_check():
 
 # --- ENDPOINTS MÉMOIRE PERSISTANTE (GHOST DB) & READINESS ---
 
-@app.get("/api/v1/memory/short")def get_short_term_memory():
+@app.get("/api/v1/memory/short")
+def get_short_term_memory():
     """Récupère les événements récents (Hot Cache / Short Term Memory)."""
     return {"market_events": db.get_recent_market_events(limit=20)}
 
