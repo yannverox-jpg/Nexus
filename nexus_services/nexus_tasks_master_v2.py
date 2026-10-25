@@ -5,12 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-try:
-    from module1_orchestrator import NexusOrchestrator
-    from module2_web3_wallet import NexusWeb3WalletManager
-    from module3_microservices import NexusMicroserviceBridge
-except ImportError:
-    from module_mocks import NexusOrchestrator, NexusWeb3WalletManager, NexusMicroserviceBridge
+from legacy_runtime_adapter import (
+    NexusOrchestrator, NexusWeb3WalletManager, NexusMicroserviceBridge
+)
 
 from auto_task_generator import NexusAutoTaskEngine
 from service_marketplace import ServiceCatalogRegistry
