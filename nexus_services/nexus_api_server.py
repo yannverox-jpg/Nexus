@@ -5,6 +5,7 @@ import sys
 import time
 import secrets
 from typing import Dict, Any, Optional, List
+from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +33,7 @@ from ghost_institutional_predictive_engine import (
     CognitiveReadinessManager
 )
 from nexus_websocket_proxy import router as ws_proxy_router
+from stealth_browser_agent import BrowserAgent, async_playwright
 
 app = FastAPI(title="Nexus NFX-GHOST v2.5 Autonomous Predictive Sentinel API", version="3.5")
 
@@ -92,6 +94,7 @@ ghost_mcp_orchestrator = MCPTryptychOrchestrator(ghost_topological_graph)
 ghost_readiness_manager = CognitiveReadinessManager()
 
 conversation_memory = ConversationMemory(configured_database_path())
+_browser_agent: Optional[BrowserAgent] = None
 
 # Modèles Pydantic
 class SubmitGoalRequest(BaseModel):
@@ -126,6 +129,20 @@ class CodeChangeProposalRequest(BaseModel):
     content: str
     title: str
     summary: str
+
+
+class BrowserNavigationRequest(BaseModel):
+    url: str
+    browser: str = "chromium"
+
+
+class BrowserFormField(BaseModel):
+    selector: str
+    value: str
+
+
+class BrowserFormFillRequest(BaseModel):
+    fields: List[BrowserFormField]
 
 @app.on_event("startup")
 async def startup_event():
@@ -163,6 +180,80 @@ def provider_status():
 @app.get("/api/v1/code-change/status")
 def code_change_status_endpoint():
     return code_change_status()
+
+
+@app.post("/api/v1/browser/navigate")
+async def navigate_browser(req: BrowserNavigationRequest):
+    """Navigate an allowlisted page and stop on CAPTCHA or anti-bot challenges."""
+    global _browser_agent
+    if async_playwright is None:
+        raise HTTPException(status_code=503, detail="Playwright is unavailable")
+    parsed = urlparse(req.url)
+    if (req.browser not in {"chromium", "firefox"}
+            or parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        raise HTTPException(status_code=400, detail="Use an absolute HTTP(S) URL without credentials, query, or fragment and choose chromium or firefox")
+    allowed_hosts = {
+        item.strip().casefold().lstrip(".")
+        for item in os.getenv("NEXUS_BROWSER_ALLOWED_HOSTS", "").split(",")
+        if item.strip()
+    }
+    host = parsed.hostname.casefold()
+    if not any(host == domain or host.endswith("." + domain) for domain in allowed_hosts):
+        raise HTTPException(status_code=403, detail="Host is not in NEXUS_BROWSER_ALLOWED_HOSTS")
+    if _browser_agent is not None and _browser_agent.browser_name != req.browser:
+        await _browser_agent.close()
+        _browser_agent = None
+    if _browser_agent is None:
+        try:
+            _browser_agent = BrowserAgent(headless=True, browser_name=req.browser)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        if _browser_agent.page is None:
+            await _browser_agent.initialize()
+        await _browser_agent.navigate(req.url)
+        challenge = await _browser_agent.detect_challenge()
+        title = await _browser_agent.page.title()
+        body = "" if challenge["detected"] else await _browser_agent.page.locator("body").inner_text(timeout=5000)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser navigation unavailable: {type(exc).__name__}") from exc
+    return {
+        "status": "HUMAN_INTERVENTION_REQUIRED" if challenge["detected"] else "OBSERVED",
+        "url": _browser_agent.page.url,
+        "title": title[:300],
+        "text_excerpt": body[:2000],
+        "challenge": challenge,
+        "proxy_configured": bool(_browser_agent.proxy_config),
+        "geolocation_emulation_enabled": _browser_agent.geolocation is not None,
+        "content_persisted": False,
+        "actions_enabled": False,
+    }
+
+
+@app.post("/api/v1/browser/fill")
+async def fill_browser_fields(req: BrowserFormFillRequest):
+    """Fill safe, uniquely identified text fields only; never submit forms."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    if not req.fields or len(req.fields) > 20:
+        raise HTTPException(status_code=400, detail="Provide between 1 and 20 fields")
+    try:
+        results = []
+        for field in req.fields:
+            if not field.selector.strip() or len(field.selector) > 300 or len(field.value) > 2000:
+                raise ValueError("Invalid selector or field value length")
+            results.append(await _browser_agent.fill_non_sensitive_field(field.selector, field.value))
+        return {"status": "FIELDS_FILLED", "fields": results, "form_submitted": False,
+                "sensitive_steps": "manual_human_required"}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser form fill failed: {type(exc).__name__}") from exc
 
 
 @app.post("/api/v1/code-change/proposals")
@@ -431,6 +522,12 @@ async def websocket_monitoring(websocket: WebSocket):
             await asyncio.sleep(2)
     except WebSocketDisconnect:
         print("🔌 [WEBSOCKET] Front-End déconnecté du monitoring.")
+
+@app.on_event("shutdown")
+async def close_canonical_browser_agent():
+    if _browser_agent is not None:
+        await _browser_agent.close()
+
 
 if __name__ == "__main__":
     import uvicorn
