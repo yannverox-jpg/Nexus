@@ -26,7 +26,6 @@ from dispute_resolution import NexusDisputeResolutionEngine
 from nexus_autonomous_boot import NexusAutonomousBootDaemon
 from ghost_meta_kernel import (
     CognitivePipeline,
-    LLMTryptychController,
     HumanInTheLoopGateway,
     DynamicCapabilityRegistry
 )
@@ -115,7 +114,6 @@ auto_engine = NexusAutoTaskEngine(orchestrator)
 ghost_capability_registry = DynamicCapabilityRegistry()
 ghost_cognitive_pipeline = CognitivePipeline()
 ghost_hitl_gateway = HumanInTheLoopGateway()
-ghost_llm_tryptych = LLMTryptychController()
 
 ghost_topological_graph = TopologicalCointegrationGraph()
 ghost_mcp_orchestrator = MCPTryptychOrchestrator(ghost_topological_graph)
