@@ -237,8 +237,10 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
         raise HTTPException(status_code=400, detail="Choisir GPT, Gemini ou Claude.")
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Le message ne peut pas être vide.")
+    safe_message = ConversationMemory.redact_sensitive_text(req.message)
+    safe_additional_context = ConversationMemory.redact_sensitive_text(req.system)
     try:
-        system_context = build_agent_system_context(provider_id, req.domain, req.system)
+        system_context = build_agent_system_context(provider_id, req.domain, safe_additional_context)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     connector = CONNECTORS[provider_id]
@@ -262,11 +264,11 @@ async def chat_with_agent(agent_name: str, req: AgentChatRequest):
     conversation_id = req.conversation_id or secrets.token_hex(16)
     prior = conversation_memory.recent_messages(conversation_id, limit=12)
     model = os.getenv(connector.model_env, connector.default_model)
-    conversation_memory.add_message(conversation_id, "user", req.message, provider_id, model)
+    conversation_memory.add_message(conversation_id, "user", safe_message, provider_id, model)
     history = "\\n".join(f"{item['role']}: {item['content']}" for item in prior[-10:])
     prompt = (
-        f"Prior conversation (context only):\\n{history}\\n\\nCurrent user message:\\n{req.message}"
-        if history else req.message
+        f"Prior conversation (context only):\\n{history}\\n\\nCurrent user message:\\n{safe_message}"
+        if history else safe_message
     )
     try:
         result = await asyncio.to_thread(
