@@ -102,6 +102,9 @@ class SubmitGoalRequest(BaseModel):
     goal: str
     budget_usdc: float = 0.0
     provider_address: Optional[str] = None
+    target_amount: Optional[float] = None
+    target_currency: str = "EUR"
+    deadline_at: Optional[str] = None
 
 class RegisterServiceRequest(BaseModel):
     name: str
@@ -564,11 +567,27 @@ def approve_hitl_action(req: HITLApprovalRequest):
 
 @app.post("/api/v1/goals/submit")
 async def submit_autonomous_goal(req: SubmitGoalRequest):
-    ctx = {"budget_usdc": req.budget_usdc, "provider_address": req.provider_address}
+    if req.budget_usdc < 0:
+        raise HTTPException(status_code=400, detail="budget_usdc must be non-negative")
+    if req.target_amount is not None and req.target_amount <= 0:
+        raise HTTPException(status_code=400, detail="target_amount must be positive when provided")
+    currency = req.target_currency.strip().upper()
+    if len(currency) != 3 or not currency.isalpha() or not currency.isascii():
+        raise HTTPException(status_code=400, detail="target_currency must be a three-letter currency code")
+    goal_id = secrets.token_hex(16)
+    ctx = {
+        "goal_id": goal_id,
+        "budget_usdc": req.budget_usdc,
+        "provider_address": req.provider_address,
+        "target_amount": req.target_amount,
+        "target_currency": currency,
+        "deadline_at": req.deadline_at,
+    }
     task_ids = await auto_engine.decompose_and_enqueue_goal(req.goal, ctx)
     # Tasks already exist in the canonical OperationalJournal. Do not duplicate
     # them in the legacy task table or claim execution at enqueue time.
     return {
+        "goal_id": goal_id,
         "status": "QUEUED",
         "execution_mode": "NOT_EXECUTED",
         "source_of_truth": "operational_journal",
@@ -576,6 +595,58 @@ async def submit_autonomous_goal(req: SubmitGoalRequest):
         "task_ids": task_ids,
         "count": len(task_ids),
     }
+
+@app.get("/api/v1/goals/{goal_id}")
+def get_goal_progress(goal_id: str):
+    """Reconcile real runtime states for one goal; never infer revenue from task completion."""
+    journal = orchestrator.runtime.operational_journal
+    matching = [
+        task for task in journal.list_tasks(limit=10000)
+        if (task.payload or {}).get("goal_id") == goal_id
+    ]
+    if not matching:
+        raise HTTPException(status_code=404, detail="Goal not found in the operational journal")
+
+    counts: Dict[str, int] = {}
+    for task in matching:
+        task_status = task.status.value
+        counts[task_status] = counts.get(task_status, 0) + 1
+    terminal = {"EXECUTED", "VERIFIED", "FAILED", "CANCELLED"}
+    all_terminal = all(task.status.value in terminal for task in matching)
+    failed = counts.get("FAILED", 0)
+    status = "BLOCKED" if failed and all_terminal else (
+        "TASKS_FINISHED" if all_terminal else "IN_PROGRESS"
+    )
+    first_payload = matching[0].payload or {}
+    constraints = first_payload.get("goal_constraints", {})
+    return {
+        "goal_id": goal_id,
+        "goal": first_payload.get("goal_context", ""),
+        "status": status,
+        "task_count": len(matching),
+        "task_status_counts": counts,
+        "tasks": [
+            {
+                "task_id": task.task_id,
+                "task_type": task.task_type,
+                "status": task.status.value,
+                "execution_mode": task.execution_mode,
+                "error": task.error,
+                "result_status": (task.result or {}).get("status"),
+            }
+            for task in matching
+        ],
+        "target": {
+            "amount": constraints.get("target_amount"),
+            "currency": constraints.get("target_currency", "EUR"),
+            "deadline_at": constraints.get("deadline_at"),
+        },
+        "budget_usdc": constraints.get("budget_usdc", 0.0),
+        "financial_progress": "NOT_LINKED_TO_VERIFIED_REVENUE",
+        "payout_status": "NOT_TRACKED_PER_GOAL",
+        "note": "Task completion does not prove revenue earned or a payout received.",
+    }
+
 
 @app.get("/api/v1/tasks")
 def get_all_tasks():
