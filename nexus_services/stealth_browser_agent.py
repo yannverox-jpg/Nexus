@@ -187,8 +187,51 @@ class BrowserAgent:
         )
 
     async def human_type(self, selector: str, text: str) -> None:
-        """Form entry is disabled; login, payment, and other submissions require a human."""
-        raise PermissionError("Automated form entry is disabled; complete sensitive forms manually")
+        """Legacy entry point remains blocked; use fill_non_sensitive_field for safe fields."""
+        raise PermissionError("Use fill_non_sensitive_field for non-sensitive fields; sensitive steps remain manual")
+
+    async def fill_non_sensitive_field(self, selector: str, value: str) -> Dict[str, Any]:
+        """Fill one uniquely identified non-sensitive text field; never submit it."""
+        if not self.page:
+            raise RuntimeError("Browser is not initialized")
+        if not isinstance(selector, str) or not selector.strip() or len(selector) > 300:
+            raise ValueError("A valid CSS selector is required")
+        if not isinstance(value, str) or len(value) > 2000:
+            raise ValueError("Field value must be text of at most 2000 characters")
+        locator = self.page.locator(selector)
+        count = await locator.count()
+        if count != 1:
+            raise ValueError("Selector must match exactly one field")
+        metadata = await locator.evaluate("""el => ({
+            tag: (el.tagName || '').toLowerCase(),
+            type: (el.getAttribute('type') || 'text').toLowerCase(),
+            name: (el.getAttribute('name') || '').toLowerCase(),
+            id: (el.id || '').toLowerCase(),
+            autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
+            disabled: !!el.disabled,
+            readOnly: !!el.readOnly
+        })""")
+        tag = metadata["tag"]
+        field_type = metadata["type"]
+        sensitive = ("password", "hidden", "submit", "button", "image", "file", "reset")
+        sensitive_words = ("password", "passwd", "secret", "token", "card", "cvv", "cvc",
+                           "iban", "routing", "bank", "otp", "mfa", "authenticator",
+                           "security_code", "private_key")
+        identity = " ".join((metadata["name"], metadata["id"], metadata["autocomplete"]))
+        if (tag not in {"input", "textarea"} or field_type in sensitive
+                or any(word in identity for word in sensitive_words)
+                or metadata["autocomplete"] in {"cc-number", "cc-csc", "cc-exp", "current-password",
+                                                "new-password", "one-time-code"}
+                or metadata["disabled"] or metadata["readOnly"]):
+            raise PermissionError("Sensitive or non-editable field blocked; complete it manually")
+        await self._journaled_operation(
+            "fill_non_sensitive_field", selector,
+            {"value_length": len(value), "field_type": field_type},
+            lambda: locator.fill(value),
+            response=lambda _: {"field_filled": True, "value_persisted": False},
+            metadata={"sensitive_fields_allowed": False, "form_submitted": False},
+        )
+        return {"selector": selector, "status": "FILLED", "form_submitted": False}
 
     async def close(self) -> None:
         try:
