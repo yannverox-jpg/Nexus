@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
 from contextlib import contextmanager
-from .sqlite_storage import connect_sqlite
+try:
+    from .sqlite_storage import connect_sqlite
+except ImportError:
+    from sqlite_storage import connect_sqlite
 
 
 def configured_database_path() -> str:
