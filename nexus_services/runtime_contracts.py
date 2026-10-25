@@ -3085,6 +3085,91 @@ class ProofVerificationEngine:
        return self.journal.wait_for_human(task_id, reason, source="ProofVerificationEngine")
 
 
+class CanonicalJournalOrchestrator:
+    """Journal-backed dispatcher. It never falls back to the legacy SQLite worker queue."""
+
+    def __init__(self, journal: OperationalJournal, session_id: str, executors: List[Executor]):
+        self.journal = journal
+        self.session_id = session_id
+        self.executors = executors
+        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queued_or_active_task_ids: set[str] = set()
+        self._running = False
+
+    async def submit_task(
+        self, task_type: str, payload: Dict[str, Any], priority: str = "MEDIUM",
+        *, session_id: Optional[str] = None,
+    ) -> str:
+        task = self.journal.create_task(
+            task_type, payload, priority=priority, session_id=session_id or self.session_id,
+            source="canonical_runtime", execution_mode="UNDECLARED",
+        )
+        self.journal.queue_task(task.task_id, source="canonical_runtime")
+        self._queued_or_active_task_ids.add(task.task_id)
+        await self._queue.put(task.task_id)
+        return task.task_id
+
+    async def start_loop(self) -> None:
+        self._running = True
+        while self._running:
+            try:
+                task_id = await asyncio.wait_for(self._queue.get(), timeout=0.25)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                task = self.journal.get_task(task_id)
+                if task is None or task.status != TaskStatus.QUEUED:
+                    continue
+                executor = next(
+                    (item for item in self.executors
+                     if item.name.casefold() in {task.task_type.casefold(), "default"}),
+                    None,
+                )
+                if executor is None:
+                    self.journal.fail_task(
+                        task_id,
+                        f"No real executor is registered for task type {task.task_type}",
+                        category="NO_EXECUTOR",
+                        recoverable=False,
+                        source="canonical_runtime",
+                    )
+                    continue
+                self.journal.start_task(task_id, source="canonical_runtime")
+                running_task = self.journal.get_task(task_id)
+                if running_task is None:
+                    raise JournalError(f"Task {task_id} disappeared after start")
+                result = await executor.execute(running_task, {"session_id": self.session_id})
+                if not isinstance(result, dict):
+                    raise JournalError("Executor must return a dictionary result")
+                self.journal._transition(
+                    task_id, TaskStatus.EXECUTED,
+                    allowed=(TaskStatus.RUNNING,),
+                    event_status=EventStatus.EXECUTION_COMPLETED,
+                    event_type="EXECUTION_COMPLETED",
+                    source="canonical_runtime",
+                    result=result,
+                    details={"executor": executor.name, "execution_mode": result.get("execution_mode", "UNDECLARED")},
+                )
+            except Exception as exc:
+                current = self.journal.get_task(task_id)
+                if current is not None and current.status in (
+                    TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.EXECUTED,
+                ):
+                    try:
+                        self.journal.fail_task(
+                            task_id, str(exc), category="EXECUTION",
+                            recoverable=False, source="canonical_runtime",
+                        )
+                    except Exception:
+                        pass
+            finally:
+                self._queued_or_active_task_ids.discard(task_id)
+                self._queue.task_done()
+
+    def stop(self) -> None:
+        self._running = False
+
+
 class NexusRuntime:
     """Runtime lifecycle and persistence authority over the operational journal."""
 
@@ -3156,10 +3241,10 @@ class NexusRuntime:
         self._dispatcher_error: Optional[BaseException] = None
         if self.orchestrator is None:
             if canonical_repository_requested:
-                self.orchestrator = RobustOrchestrator(
+                self.orchestrator = CanonicalJournalOrchestrator(
                     journal=self.operational_journal,
                     session_id=self._run_id,
-                    tool_registry=self.tool_registry,
+                    executors=self.executors,
                 )
             elif hasattr(self.task_repository, "db_manager"):
                 try:
@@ -3250,11 +3335,10 @@ class NexusRuntime:
         if self.orchestrator is None and isinstance(
             self.task_repository, OperationalJournal
         ):
-            from orchestrator import RobustOrchestrator
-            self.orchestrator = RobustOrchestrator(
+            self.orchestrator = CanonicalJournalOrchestrator(
                 journal=self.operational_journal,
                 session_id=self._run_id,
-                tool_registry=self.tool_registry,
+                executors=self.executors,
             )
         elif self.orchestrator is None and hasattr(self.task_repository, "db_manager"):
             from orchestrator import RobustOrchestrator
