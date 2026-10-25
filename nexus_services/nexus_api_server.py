@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -144,6 +145,26 @@ class BrowserFormField(BaseModel):
 class BrowserFormFillRequest(BaseModel):
     fields: List[BrowserFormField]
 
+
+class BrowserSelectorRequest(BaseModel):
+    selector: str
+
+
+class BrowserSelectRequest(BrowserSelectorRequest):
+    value: str
+
+
+class BrowserToggleRequest(BrowserSelectorRequest):
+    checked: bool = True
+
+
+class BrowserUploadRequest(BrowserSelectorRequest):
+    file_path: str
+
+
+class BrowserScreenshotRequest(BaseModel):
+    full_page: bool = False
+
 @app.on_event("startup")
 async def startup_event():
     orchestrator.spawn_agent("Worker-Alpha", "API_CONTRACT")
@@ -254,6 +275,85 @@ async def fill_browser_fields(req: BrowserFormFillRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Browser form fill failed: {type(exc).__name__}") from exc
+
+
+
+@app.post("/api/v1/browser/select")
+async def select_browser_option(req: BrowserSelectRequest):
+    """Select one option in a non-sensitive native select; never submits the form."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    try:
+        return await _browser_agent.select_non_sensitive_option(req.selector, req.value)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser select failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/browser/toggle")
+async def toggle_browser_checkable(req: BrowserToggleRequest):
+    """Set a non-sensitive checkbox/radio state without submitting a form."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    try:
+        return await _browser_agent.set_non_sensitive_checkable(req.selector, req.checked)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser toggle failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/browser/click")
+async def click_browser_element(req: BrowserSelectorRequest):
+    """Click only allowlisted links or non-submitting buttons; sensitive actions stay manual."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    try:
+        return await _browser_agent.click_non_sensitive_element(req.selector)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser click failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/browser/upload")
+async def upload_browser_file(req: BrowserUploadRequest):
+    """Select a file only from NEXUS_BROWSER_UPLOAD_DIR; file paths are never unrestricted."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    try:
+        return await _browser_agent.upload_allowlisted_file(req.selector, req.file_path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser upload failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/browser/screenshot")
+async def screenshot_browser_page(req: BrowserScreenshotRequest):
+    """Return a base64 screenshot in memory; no caller-controlled filesystem path."""
+    if _browser_agent is None or _browser_agent.page is None:
+        raise HTTPException(status_code=409, detail="Navigate to an allowlisted page first")
+    try:
+        image_bytes = await _browser_agent.capture_screenshot_bytes(req.full_page)
+        return {"status": "CAPTURED", "encoding": "base64",
+                "content_type": "image/png", "image": base64.b64encode(image_bytes).decode("ascii"),
+                "content_persisted": False}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Browser screenshot failed: {type(exc).__name__}") from exc
 
 
 @app.post("/api/v1/code-change/proposals")
