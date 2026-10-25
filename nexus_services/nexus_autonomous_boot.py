@@ -1,86 +1,72 @@
+"""Conservative runtime readiness checks; no synthetic bootstrap transactions."""
+from __future__ import annotations
+
 import asyncio
-import json
 import time
 import uuid
-from typing import Dict, Any, List
-from auto_task_generator import NexusAutoTaskEngine
-from task_persistence_db import NexusDatabaseManager
+from typing import Any, Dict
+
 
 class NexusM2MProtocolHandler:
-    """
-    Gestionnaire de protocole M2M (Machine-to-Machine).
-    Permet la négociation automatique de contrats et le troc de ressources entre IA.
-    """
+    """Build an unsigned proposal envelope; this is not authentication or payment."""
+
     def __init__(self, agent_id: str):
         self.agent_id = agent_id
 
-    def create_m2m_handshake(self, target_ai_endpoint: str, requested_resource: str, offer_usdc: float) -> Dict[str, Any]:
-        """Génère un payload de négociation M2M signé pour un autre agent IA."""
+    def create_m2m_handshake(
+        self, target_ai_endpoint: str, requested_resource: str, offer_usdc: float
+    ) -> Dict[str, Any]:
         return {
             "protocol_version": "NEXUS-M2M-v1",
             "sender_agent": self.agent_id,
             "timestamp": time.time(),
-            "request_type": "RESOURCE_ACQUISITION",
+            "request_type": "RESOURCE_ACQUISITION_PROPOSAL",
             "payload": {
                 "resource": requested_resource,
                 "offer_amount_usdc": offer_usdc,
-                "target_endpoint": target_ai_endpoint
+                "target_endpoint": target_ai_endpoint,
             },
-            "signature_nonce": str(uuid.uuid4())
+            "nonce": str(uuid.uuid4()),
+            "security_mode": "UNSIGNED_PROPOSAL_ONLY",
+            "funds_moved": False,
         }
 
     def parse_and_validate_m2m_response(self, response: Dict[str, Any]) -> bool:
-        """Valide le contrat M2M retourné par une IA tierce."""
-        if response.get("protocol_version") != "NEXUS-M2M-v1":
-            return False
-        return response.get("status") == "ACCEPTED"
+        return (
+            response.get("protocol_version") == "NEXUS-M2M-v1"
+            and response.get("status") == "ACCEPTED"
+            and response.get("security_mode") == "UNSIGNED_PROPOSAL_ONLY"
+            and response.get("funds_moved") is False
+        )
 
 
 class NexusAutonomousBootDaemon:
-    """
-    Démon d'amorçage autonome Zero-Human-Touch.
-    Prend en charge le cahier des charges initial et lance la boucle de réflexion permanente.
-    """
-    def __init__(self, auto_engine: NexusAutoTaskEngine, db: NexusDatabaseManager):
+    """Compatibility service that checks readiness without inventing startup work."""
+
+    def __init__(self, auto_engine: Any, db: Any):
         self.auto_engine = auto_engine
         self.db = db
-        self.m2m_handler = NexusM2MProtocolHandler(agent_id="NEXUS-PRIME-ORCHESTRATOR")
+        self.m2m_handler = NexusM2MProtocolHandler("NEXUS-ORCHESTRATOR")
         self.is_running = False
 
-    async def boot_sequence(self):
-        """Séquence d'amorçage autonome au lancement de Nexus."""
-        print("\n🤖 [NEXUS AUTONOMOUS BOOT] Démarrage du Kernel Zero-Human-Touch...")
-
-        # 1. Vérification / Restauration de l'état mémoire SQLite
-        previous_tasks = self.db.get_all_tasks()
-        print(f"🧠 [MEMORY RESTORE] {len(previous_tasks)} tâches trouvées en base.")
-
-        # 2. Injection autonome du Cahier des Charges Initial
-        primary_bootstrap_goal = (
-            "DÉPLOIEMENT AUTONOME NEXUS: Initialiser la découverte M2M, "
-            "vérifier les réserves de liquidité Web3, "
-            "et ouvrir l'écoute sur le registre de micro-services."
-        )
-
-        ctx = {
-            "budget_usdc": 10.0,
-            "provider_address": "0x0000000000000000000000000000000000000000",
-            "m2m_enabled": True
+    async def boot_sequence(self) -> Dict[str, Any]:
+        tasks = self.db.get_all_tasks() if hasattr(self.db, "get_all_tasks") else []
+        result = {
+            "status": "READY_FOR_CONFIGURED_WORKFLOWS",
+            "existing_task_count": len(tasks),
+            "tasks_created": 0,
+            "external_actions_executed": 0,
+            "financial_actions_executed": 0,
+            "note": "Startup performs no synthetic wallet, liquidity, M2M purchase, or escrow operation.",
         }
+        print(f"[NEXUS BOOT] {result}")
+        return result
 
-        print("🚀 [AUTO-GENERATION] Injection du cahier des charges par le démon...")
-        task_ids = await self.auto_engine.decompose_and_enqueue_goal(primary_bootstrap_goal, ctx)
-
-        for tid in task_ids:
-            self.db.save_task(task_id=tid, task_type="BOOTSTRAP_GOAL", priority="CRITICAL", status="ACTIVE", payload=ctx)
-
-        print(f"✅ [BOOT COMPLETE] {len(task_ids)} tâches de boot actives. Nexus est en autonomie totale.\n")
-
-    async def start_m2m_continuous_loop(self):
-        """Boucle permanente M2M d'auto-maintenance."""
+    async def start_m2m_continuous_loop(self) -> None:
         self.is_running = True
         await self.boot_sequence()
-
         while self.is_running:
-            # Surveillance et négociation d'intégrité réseau entre agents
-            await asyncio.sleep(10)
+            await asyncio.sleep(30)
+
+    def stop(self) -> None:
+        self.is_running = False

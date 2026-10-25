@@ -1,76 +1,87 @@
-import unittest
 import os
 import tempfile
+import unittest
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
+import nexus_services.nexus_api_server as nexus_api_server
+from nexus_services.memory_store import ConversationMemory
 
-# Use temp database for test
-temp_fd, temp_db_path = tempfile.mkstemp(suffix=".db")
-
-from task_persistence_db import NexusDatabaseManager
-import nexus_api_server
-
-# Patch db in api_server with temp db
-nexus_api_server.db = NexusDatabaseManager(db_path=temp_db_path)
 
 class TestNexusAPIServer(unittest.TestCase):
-
-    def setUp(self):
-        self.client = TestClient(nexus_api_server.app)
-
-    def test_health_check(self):
-        response = self.client.get("/health")
+    def test_health_is_liveness_only(self):
+        from fastapi.testclient import TestClient
+        client = TestClient(nexus_api_server.app)
+        response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "online")
-        self.assertIn("connected", response.json())
+        self.assertNotIn("wallet", response.json())
 
-    def test_withdraw_missing_key(self):
-        payload = {
-            "to_address": "0x0000000000000000000000000000000000000000",
-            "amount_usdc": 10.0
+    def test_proprietary_wallet_and_treasury_routes_are_absent(self):
+        paths = {
+            getattr(route, "path", "")
+            for route in nexus_api_server.app.routes
         }
-        response = self.client.post("/api/v1/treasury/withdraw", json=payload)
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("NEXUS_PRIVATE_KEY", response.json()["detail"])
+        self.assertNotIn("/api/v1/wallet/generate", paths)
+        self.assertNotIn("/api/v1/treasury/withdraw", paths)
 
-    def test_submit_goal(self):
-        payload = {
-            "goal": "Test Goal API",
-            "budget_usdc": 10.0,
-            "provider_address": "0x12345"
-        }
-        response = self.client.post("/api/v1/goals/submit", json=payload)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "SUCCESS")
-        self.assertEqual(len(data["task_ids"]), 3)
+    def test_legacy_adapter_has_no_wallet_manager(self):
+        import nexus_services.legacy_runtime_adapter as adapter
+        self.assertFalse(hasattr(adapter, "NexusWeb3WalletManager"))
 
-    def test_get_tasks(self):
-        response = self.client.get("/api/v1/tasks")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("tasks", response.json())
+    def test_identity_chat_memory_and_code_change_routes_are_registered(self):
+        paths = {getattr(route, "path", "") for route in nexus_api_server.app.routes}
+        for path in (
+            "/api/v1/identity", "/api/v1/capabilities", "/api/v1/providers",
+            "/api/v1/ghost/chat/{agent_name}", "/api/v1/memory/facts",
+            "/api/v1/memory/conversations/{conversation_id}",
+            "/api/v1/code-change/status", "/api/v1/code-change/proposals",
+            "/api/v1/browser/navigate", "/api/v1/browser/fill",
+            "/api/v1/browser/select", "/api/v1/browser/toggle",
+            "/api/v1/browser/click", "/api/v1/browser/upload",
+            "/api/v1/browser/screenshot",
+        ):
+            self.assertIn(path, paths)
 
-    def test_marketplace_services(self):
-        res_list = self.client.get("/api/v1/marketplace/services")
-        self.assertEqual(response_code := res_list.status_code, 200)
-        self.assertIn("CONTRACT_VERIFIER", res_list.json()["services"])
+    def test_chat_persists_redacted_history_with_configured_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = ConversationMemory(os.path.join(tmp, "chat.db"))
+            original_memory = nexus_api_server.conversation_memory
+            nexus_api_server.conversation_memory = memory
+            seen = {}
+            def complete(prompt, **kwargs):
+                seen["prompt"] = prompt
+                return {
+                    "provider": "codex_gpt", "model": "test-model",
+                    "status": "ADVISORY", "text": "Réponse test",
+                    "can_execute_actions": False,
+                }
+            connector = type("Connector", (), {
+                "api_key_env": "TEST_PROVIDER_KEY",
+                "model_env": "TEST_PROVIDER_MODEL",
+                "default_model": "test-model",
+                "status": staticmethod(lambda: {"connector_available": True}),
+                "complete": staticmethod(complete),
+            })()
+            try:
+                with patch.dict(os.environ, {"NEXUS_API_BEARER_TOKEN": "test-token", "TEST_PROVIDER_MODEL": "test-model"}):
+                    with patch.dict(nexus_api_server.CONNECTORS, {"codex_gpt": connector}):
+                        client = TestClient(nexus_api_server.app)
+                        response = client.post(
+                            "/api/v1/ghost/chat/gpt",
+                            headers={"Authorization": "Bearer test-token"},
+                            json={"message": "Bonjour sk-abcdefghijklmnopqrstuvwxyz012345", "conversation_id": "test-conversation", "domain": "general"},
+                        )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(response.json()["memory_persisted"])
+                messages = memory.recent_messages("test-conversation")
+                self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+                self.assertEqual(messages[1]["content"], "Réponse test")
+                self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz012345", seen["prompt"])
+                self.assertIn("[REDACTED]", seen["prompt"])
+            finally:
+                nexus_api_server.conversation_memory = original_memory
 
-        reg_payload = {
-            "name": "TEST_SVC",
-            "endpoint": "https://api.test.com",
-            "cost_usdc": 1.5,
-            "method": "POST"
-        }
-        res_reg = self.client.post("/api/v1/marketplace/services", json=reg_payload)
-        self.assertEqual(res_reg.status_code, 200)
-        self.assertEqual(res_reg.json()["status"], "REGISTERED")
-
-    def test_generate_wallet(self):
-        nexus_api_server.wallet_mgr = nexus_api_server.NexusWeb3WalletManager()
-        response = self.client.post("/api/v1/wallet/generate")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "CREATED")
-        self.assertTrue(data["address"].startswith("0x"))
 
 if __name__ == "__main__":
     unittest.main()

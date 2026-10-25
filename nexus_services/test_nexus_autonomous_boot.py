@@ -4,7 +4,7 @@ import tempfile
 from auto_task_generator import NexusAutoTaskEngine
 from task_persistence_db import NexusDatabaseManager
 from nexus_autonomous_boot import NexusM2MProtocolHandler, NexusAutonomousBootDaemon
-from module_mocks import NexusOrchestrator
+from nexus_services.test_fakes import NexusOrchestrator
 
 class TestNexusAutonomousBoot(unittest.IsolatedAsyncioTestCase):
 

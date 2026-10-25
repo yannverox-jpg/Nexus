@@ -1,0 +1,40 @@
+name: Nexus runtime safety checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install runtime dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Compile Python modules
+        run: python -m compileall -q nexus_services
+      - name: Run runtime and browser safety tests
+        run: >-
+          python -m unittest -v
+          nexus_services.test_browser_safety
+          nexus_services.test_runtime_contracts
+          nexus_services.test_operational_journal
+          nexus_services.test_operational_dashboard
+          nexus_services.test_multi_agent_orchestrator
+          nexus_services.test_legacy_runtime_adapter
+          nexus_services.test_nexus_api_server
+          nexus_services.test_nexus_identity
+          nexus_services.test_nexus_safe_executors
+          nexus_services.test_code_change_manager
+          nexus_services.test_stablecoin_liquidation
+          nexus_services.test_memory_store
+          nexus_services.test_sqlite_storage
+          nexus_services.test_financial_architecture
+          nexus_services.test_broker_dashboard

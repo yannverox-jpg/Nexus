@@ -28,6 +28,38 @@ class RuntimeContractsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, TaskStatus.PLANNED)
         self.assertEqual(task.task_type, "EXECUTION")
 
+    async def test_default_runtime_uses_canonical_journal_and_fails_closed_without_executor(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            journal = __import__(
+                "nexus_services.runtime_contracts", fromlist=["OperationalJournal"]
+            ).OperationalJournal(os.path.join(tmp_dir, "runtime.db"))
+            runtime = NexusRuntime(operational_journal=journal, name="default-runtime")
+            boot_result = runtime.boot()
+            self.assertEqual(boot_result["status"], "BOOT_COMPLETED")
+            self.assertIs(runtime.initialize_orchestrator().journal, journal)
+
+            task = await runtime.submit_task_async("UNSUPPORTED_ACTION", {"action": "must-not-fake"})
+            self.assertEqual(task.status, TaskStatus.QUEUED)
+            self.assertIsNotNone(journal.get_task(task.task_id))
+
+            await runtime.start_dispatcher()
+            try:
+                for _ in range(100):
+                    persisted = journal.get_task(task.task_id)
+                    if persisted is not None and persisted.status == TaskStatus.FAILED:
+                        break
+                    await asyncio.sleep(0.02)
+                else:
+                    self.fail("Task without a registered executor did not fail closed")
+            finally:
+                await runtime.stop_dispatcher()
+
+            persisted = journal.get_task(task.task_id)
+            self.assertEqual(persisted.status, TaskStatus.FAILED)
+            self.assertIn("No real executor is registered", persisted.error)
+            self.assertNotEqual(persisted.status, TaskStatus.EXECUTED)
+            self.assertNotEqual(persisted.status, TaskStatus.VERIFIED)
+
     async def test_execution_is_persisted_and_emits_observed_transition_events(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             task_db_path = os.path.join(tmp_dir, "nexus_tasks_state.db")

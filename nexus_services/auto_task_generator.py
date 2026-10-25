@@ -1,64 +1,81 @@
-import json
-import asyncio
-from typing import List, Dict, Any
+"""Deterministic, non-custodial task planning for Nexus.
+
+This planner does not claim to be an LLM and never fabricates a blockchain,
+wallet, provider account, budget, or successful external execution.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List
+import uuid
+
 try:
-    from module1_orchestrator import NexusOrchestrator, TaskPriority
+    from .legacy_runtime_adapter import NexusOrchestrator, TaskPriority
 except ImportError:
-    from module_mocks import NexusOrchestrator, TaskPriority
+    from legacy_runtime_adapter import NexusOrchestrator, TaskPriority
+
 
 class NexusAutoTaskEngine:
-    """
-    Module de réflexion autonome : analyse un objectif de haut niveau
-    et décompose la feuille de route en tâches autonomes sans intervention humaine.
-    """
+    """Convert an objective into auditable planning and reconciliation tasks."""
+
     def __init__(self, orchestrator: NexusOrchestrator):
         self.orchestrator = orchestrator
 
-    async def decompose_and_enqueue_goal(self, high_level_goal: str, context: Dict[str, Any]) -> List[str]:
-        """
-        Analyse l'objectif global et génère dynamiquement la séquence de tâches.
-        """
-        print(f"🧠 [NEXUS REASONING] Analyse de l'objectif : '{high_level_goal}'")
-
-        # Planification dynamique générée par l'IA (structure de sous-tâches autonome)
-        generated_tasks = [
-            {
-                "task_type": "API_CONTRACT",
-                "priority": TaskPriority.HIGH,
-                "payload": {
-                    "service_name": "CONTRACT_VERIFIER",
-                    "action": "FETCH_SPECIFICATIONS",
-                    "goal_context": high_level_goal
-                }
-            },
-            {
-                "task_type": "WEB3_EXECUTION",
-                "priority": TaskPriority.CRITICAL,
-                "payload": {
-                    "action": "LOCK_ESCROW_FUNDS",
-                    "amount_usdc": context.get("budget_usdc", 10.0),
-                    "recipient": context.get("provider_address", "0x0000000000000000000000000000000000000000")
-                }
-            },
-            {
-                "task_type": "API_CONTRACT",
-                "priority": TaskPriority.MEDIUM,
-                "payload": {
-                    "service_name": "EXECUTION_PROVIDER",
-                    "action": "RUN_SERVICE_TASK",
-                    "goal_context": high_level_goal
-                }
-            }
+    async def decompose_and_enqueue_goal(
+        self, high_level_goal: str, context: Dict[str, Any]
+    ) -> List[str]:
+        if not isinstance(high_level_goal, str) or not high_level_goal.strip():
+            raise ValueError("L'objectif Nexus ne peut pas être vide")
+        # This is deterministic planning, not a claim that an LLM generated a plan.
+        # A stable mission ID lets the API reconcile every task belonging to this goal.
+        goal_id = str(context.get("goal_id") or uuid.uuid4())
+        safe_context = {
+            key: context[key]
+            for key in ("budget_usdc", "target_amount", "target_currency", "deadline_at")
+            if key in context
+        }
+        task_specs = [
+            (
+                "CAPABILITY_ASSESSMENT",
+                TaskPriority.HIGH,
+                {
+                    "action": "ASSESS_CONFIGURED_CAPABILITIES",
+                    "goal_context": high_level_goal.strip(),
+                    "execution_mode": "PLAN_ONLY",
+                },
+            ),
+            (
+                "WORKFLOW_PLAN_REVIEW",
+                TaskPriority.HIGH,
+                {
+                    "action": "PREPARE_CONSTRAINT_AWARE_PLAN",
+                    "goal_context": high_level_goal.strip(),
+                    "execution_mode": "PLAN_ONLY",
+                },
+            ),
+            (
+                "PLATFORM_ACCOUNT_RECONCILIATION",
+                TaskPriority.MEDIUM,
+                {
+                    "action": "RECONCILE_AUTHORIZED_EXTERNAL_SNAPSHOTS",
+                    "financial_model": "EXTERNAL_PLATFORM_ACCOUNTS",
+                    "payout_destination": "EXTERNAL_PREPAID_VISA_WHEN_SUPPORTED",
+                    "execution_mode": "RECONCILIATION_ONLY",
+                },
+            ),
         ]
-
-        submitted_ids = []
-        for task_def in generated_tasks:
+        submitted_ids: List[str] = []
+        for task_type, priority, payload in task_specs:
+            task_payload = {
+                **payload,
+                "goal_id": goal_id,
+                "goal_context": high_level_goal.strip(),
+                "goal_constraints": safe_context,
+            }
             task_id = await self.orchestrator.submit_task(
-                task_type=task_def["task_type"],
-                payload=task_def["payload"],
-                priority=task_def["priority"]
+                task_type=task_type,
+                payload=task_payload,
+                priority=priority,
             )
             submitted_ids.append(task_id)
-            print(f"  └─ 📌 Tâche auto-générée créée: {task_id} [{task_def['task_type']}]")
-
+        self.last_goal_id = goal_id
         return submitted_ids

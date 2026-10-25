@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+try:
+    from .sqlite_storage import apply_migrations, connect_sqlite
+except ImportError:  # legacy direct-module imports
+    from sqlite_storage import apply_migrations, connect_sqlite
+
 
 class TaskStatus(str, Enum):
     PLANNED = "PLANNED"
@@ -339,52 +344,87 @@ class TaskPersistenceAdapter(TaskRepository):
 
 
 class SQLiteTaskRepository(TaskRepository):
-    def __init__(self, db_path: str = "nexus_tasks_state.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "nexus_tasks_state.db", timeout: float = 30.0):
+        self.timeout = timeout
+        self._keeper = None
+        if db_path == ":memory:":
+            self.db_path = f"file:nexus_tasks_{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._keeper = connect_sqlite(self.db_path, timeout=timeout)
+        else:
+            self.db_path = db_path
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        db_path = self.db_path
-        if db_path == ":memory:":
-            db_path = "file::memory:?cache=shared"
-        conn = sqlite3.connect(db_path, uri=db_path.startswith("file:"))
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_sqlite(self.db_path, timeout=self.timeout)
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        def create_task_table(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS tasks (
+                CREATE TABLE IF NOT EXISTS canonical_tasks (
                     task_id TEXT PRIMARY KEY,
-                    task_type TEXT,
-                    source TEXT,
-                    agent TEXT,
-                    priority TEXT,
-                    status TEXT,
-                    payload TEXT,
+                    task_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    agent TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
                     result TEXT,
                     error TEXT,
-                    created_at REAL,
-                    updated_at REAL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
                     started_at REAL,
                     completed_at REAL,
                     verified_at REAL,
                     run_id TEXT,
                     parent_task_id TEXT,
                     correlation_id TEXT,
-                    proof TEXT,
-                    metadata TEXT
+                    proof TEXT NOT NULL,
+                    metadata TEXT NOT NULL
                 )
                 """
             )
-            conn.commit()
+            # Upgrade data from this repository's former table only when it has
+            # the canonical columns. The legacy task manager's simpler "tasks"
+            # table is intentionally left untouched.
+            old_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+            ).fetchone()
+            if old_table:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+                required = {
+                    "task_id", "task_type", "source", "agent", "priority", "status",
+                    "payload", "result", "error", "created_at", "updated_at",
+                    "started_at", "completed_at", "verified_at", "run_id",
+                    "parent_task_id", "correlation_id", "proof", "metadata",
+                }
+                if required.issubset(columns):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO canonical_tasks
+                        SELECT task_id, task_type, source, agent, priority, status, payload,
+                        result, error, created_at, updated_at, started_at, completed_at,
+                        verified_at, run_id, parent_task_id, correlation_id, proof, metadata
+                        FROM tasks"""
+                    )
+
+        def create_task_indexes(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_canonical_tasks_created "
+                "ON canonical_tasks(created_at DESC)"
+            )
+
+        with self._connect() as conn:
+            apply_migrations(
+                conn,
+                "sqlite_task_repository",
+                [(1, create_task_table), (2, create_task_indexes)],
+            )
 
     def save_task(self, task: TaskRecord) -> TaskRecord:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO tasks (
+                INSERT INTO canonical_tasks (
                     task_id, task_type, source, agent, priority, status, payload, result, error,
                     created_at, updated_at, started_at, completed_at, verified_at, run_id,
                     parent_task_id, correlation_id, proof, metadata
@@ -435,7 +475,7 @@ class SQLiteTaskRepository(TaskRepository):
 
     def get_task(self, task_id: str) -> Optional[TaskRecord]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            row = conn.execute("SELECT * FROM canonical_tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             return None
         return TaskRecord(
@@ -463,7 +503,7 @@ class SQLiteTaskRepository(TaskRepository):
     def list_tasks(self, limit: int = 100) -> List[TaskRecord]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM canonical_tasks ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self.get_task(row["task_id"]) for row in rows]
@@ -533,24 +573,7 @@ class OperationalJournal(TaskRepository, EventRepository):
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        if self._memory_uri:
-            conn = sqlite3.connect(
-                self._memory_uri,
-                uri=True,
-                timeout=self.timeout,
-                check_same_thread=False,
-            )
-        else:
-            conn = sqlite3.connect(
-                self.db_path, timeout=self.timeout, check_same_thread=False
-            )
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self._memory_uri:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = FULL")
-        return conn
+        return connect_sqlite(self._memory_uri or self.db_path, timeout=self.timeout)
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -3085,6 +3108,91 @@ class ProofVerificationEngine:
        return self.journal.wait_for_human(task_id, reason, source="ProofVerificationEngine")
 
 
+class CanonicalJournalOrchestrator:
+    """Journal-backed dispatcher. It never falls back to the legacy SQLite worker queue."""
+
+    def __init__(self, journal: OperationalJournal, session_id: str, executors: List[Executor]):
+        self.journal = journal
+        self.session_id = session_id
+        self.executors = executors
+        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queued_or_active_task_ids: set[str] = set()
+        self._running = False
+
+    async def submit_task(
+        self, task_type: str, payload: Dict[str, Any], priority: str = "MEDIUM",
+        *, session_id: Optional[str] = None,
+    ) -> str:
+        task = self.journal.create_task(
+            task_type, payload, priority=priority, session_id=session_id or self.session_id,
+            source="canonical_runtime", execution_mode="UNDECLARED",
+        )
+        self.journal.queue_task(task.task_id, source="canonical_runtime")
+        self._queued_or_active_task_ids.add(task.task_id)
+        await self._queue.put(task.task_id)
+        return task.task_id
+
+    async def start_loop(self) -> None:
+        self._running = True
+        while self._running:
+            try:
+                task_id = await asyncio.wait_for(self._queue.get(), timeout=0.25)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                task = self.journal.get_task(task_id)
+                if task is None or task.status != TaskStatus.QUEUED:
+                    continue
+                executor = next(
+                    (item for item in self.executors
+                     if item.name.casefold() in {task.task_type.casefold(), "default"}),
+                    None,
+                )
+                if executor is None:
+                    self.journal.fail_task(
+                        task_id,
+                        f"No real executor is registered for task type {task.task_type}",
+                        category="NO_EXECUTOR",
+                        recoverable=False,
+                        source="canonical_runtime",
+                    )
+                    continue
+                self.journal.start_task(task_id, source="canonical_runtime")
+                running_task = self.journal.get_task(task_id)
+                if running_task is None:
+                    raise JournalError(f"Task {task_id} disappeared after start")
+                result = await executor.execute(running_task, {"session_id": self.session_id})
+                if not isinstance(result, dict):
+                    raise JournalError("Executor must return a dictionary result")
+                self.journal._transition(
+                    task_id, TaskStatus.EXECUTED,
+                    allowed=(TaskStatus.RUNNING,),
+                    event_status=EventStatus.EXECUTION_COMPLETED,
+                    event_type="EXECUTION_COMPLETED",
+                    source="canonical_runtime",
+                    result=result,
+                    details={"executor": executor.name, "execution_mode": result.get("execution_mode", "UNDECLARED")},
+                )
+            except Exception as exc:
+                current = self.journal.get_task(task_id)
+                if current is not None and current.status in (
+                    TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.EXECUTED,
+                ):
+                    try:
+                        self.journal.fail_task(
+                            task_id, str(exc), category="EXECUTION",
+                            recoverable=False, source="canonical_runtime",
+                        )
+                    except Exception:
+                        pass
+            finally:
+                self._queued_or_active_task_ids.discard(task_id)
+                self._queue.task_done()
+
+    def stop(self) -> None:
+        self._running = False
+
+
 class NexusRuntime:
     """Runtime lifecycle and persistence authority over the operational journal."""
 
@@ -3156,10 +3264,10 @@ class NexusRuntime:
         self._dispatcher_error: Optional[BaseException] = None
         if self.orchestrator is None:
             if canonical_repository_requested:
-                self.orchestrator = RobustOrchestrator(
+                self.orchestrator = CanonicalJournalOrchestrator(
                     journal=self.operational_journal,
                     session_id=self._run_id,
-                    tool_registry=self.tool_registry,
+                    executors=self.executors,
                 )
             elif hasattr(self.task_repository, "db_manager"):
                 try:
@@ -3250,11 +3358,10 @@ class NexusRuntime:
         if self.orchestrator is None and isinstance(
             self.task_repository, OperationalJournal
         ):
-            from orchestrator import RobustOrchestrator
-            self.orchestrator = RobustOrchestrator(
+            self.orchestrator = CanonicalJournalOrchestrator(
                 journal=self.operational_journal,
                 session_id=self._run_id,
-                tool_registry=self.tool_registry,
+                executors=self.executors,
             )
         elif self.orchestrator is None and hasattr(self.task_repository, "db_manager"):
             from orchestrator import RobustOrchestrator
