@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,7 +16,23 @@ def configured_database_path() -> str:
 
 
 class ConversationMemory:
-    """Persist chat history in the operational SQLite database, never API keys."""
+    """Persist chat history in the operational SQLite database with secret redaction."""
+
+    _SECRET_PATTERNS = (
+        re.compile(r"(?i)\\bBearer\\s+[A-Za-z0-9._~+/-]+=*"),
+        re.compile(r"\\bsk-[A-Za-z0-9_-]{12,}\\b"),
+        re.compile(r"\\bAIza[0-9A-Za-z_-]{20,}\\b"),
+        re.compile(r"\\bgh[pousr]_[A-Za-z0-9]{20,}\\b"),
+        re.compile(r"(?i)\\b(api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key)\\s*[:=]\\s*[^\\s,;]+"),
+    )
+
+    @classmethod
+    def redact_sensitive_text(cls, content: str) -> str:
+        """Remove common credential formats before writing text to persistent storage."""
+        result = str(content)
+        for pattern in cls._SECRET_PATTERNS:
+            result = pattern.sub("[REDACTED]", result)
+        return result
 
     def __init__(self, db_path: Optional[str] = None, timeout: float = 30.0):
         self.db_path = db_path or configured_database_path()
@@ -71,7 +88,7 @@ class ConversationMemory:
         with self._connection() as conn:
             cursor = conn.execute(
                 "INSERT INTO nexus_chat_messages(conversation_id,role,content,provider,model) VALUES(?,?,?,?,?)",
-                (conversation_id, role, content, provider, model),
+                (conversation_id, role, self.redact_sensitive_text(content), provider, model),
             )
             return int(cursor.lastrowid)
 
