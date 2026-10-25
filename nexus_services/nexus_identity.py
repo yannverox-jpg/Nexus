@@ -11,6 +11,7 @@ from typing import Any
 
 from .agent_roles import get_role_assignments
 from .ai_connectors import get_connector_status
+from .code_change_manager import code_change_status
 
 
 NEXUS_IDENTITY: dict[str, Any] = {
@@ -65,9 +66,8 @@ def get_capability_status() -> dict[str, Any]:
     except Exception:
         browser_package = False
 
-    code_mode = os.getenv("NEXUS_CODE_CHANGE_MODE", "PROPOSAL_ONLY").strip().upper()
-    if code_mode not in {"DISABLED", "PROPOSAL_ONLY", "APPROVAL_GATED"}:
-        code_mode = "PROPOSAL_ONLY"
+    code_status = code_change_status()
+    code_mode = code_status["mode"]
 
     return {
         "identity_loaded": True,
@@ -85,10 +85,12 @@ def get_capability_status() -> dict[str, Any]:
         },
         "code_adaptation": {
             "mode": code_mode,
-            "can_propose_changes": code_mode in {"PROPOSAL_ONLY", "APPROVAL_GATED"},
+            "can_propose_changes": True,
+            "github_pr_workflow_configured": code_status["configured"],
             "can_apply_changes_automatically": False,
             "requires_tests_and_human_approval": True,
-            "note": "No production self-editing is claimed; changes must be reviewed, tested and applied through a controlled repository workflow.",
+            "note": "When GitHub credentials are configured, Nexus can open a draft pull request on a separate branch. It never edits the running process, bypasses CI, or merges its own changes.",
+            "github": code_status,
         },
         "execution": {
             "can_plan_tasks": True,
