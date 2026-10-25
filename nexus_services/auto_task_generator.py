@@ -2,9 +2,9 @@ import json
 import asyncio
 from typing import List, Dict, Any
 try:
-    from module1_orchestrator import NexusOrchestrator, TaskPriority
+    from .legacy_runtime_adapter import NexusOrchestrator, TaskPriority
 except ImportError:
-    from module_mocks import NexusOrchestrator, TaskPriority
+    from legacy_runtime_adapter import NexusOrchestrator, TaskPriority
 
 class NexusAutoTaskEngine:
     """
